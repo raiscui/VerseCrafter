@@ -28,7 +28,22 @@
   <sup>†</sup>Corresponding authors
 </p>
 
+<p align="center">
+  <b>CVPR 2026</b>
+</p>
+
 ✨ A controllable video world model with explicit 4D geometric control over camera and multi-object motion.
+
+## 🔥 News
+
+- **[Feb 21, 2026]** 🎉 VerseCrafter is accepted to **CVPR 2026**!
+- **[Jan 9, 2026]** 🚀 VerseCrafter is released! We publish the [arXiv preprint](https://arxiv.org/pdf/2601.05138), inference code, and model checkpoints.
+
+## ✅ TODO
+
+- [x] Inference code
+- [ ] Training code
+- [ ] Data processing code
 
 ## TL;DR
 
@@ -301,6 +316,10 @@ Our codes are built upon  [MoGe](https://github.com/microsoft/MoGe), [Grounded-S
 ## License
 
 This project is released under the [VerseCrafter License](LICENSE). It is intended for **academic/research purposes only** and commercial use is not permitted.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=TencentARC/VerseCrafter&type=date&legend=top-left)](https://www.star-history.com/#TencentARC/VerseCrafter&type=date&legend=top-left)
 
 ## Citation
 
