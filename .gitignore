@@ -6,3 +6,4 @@ __pycache__/
 .pixi/
 pytorch3d/
 model/
+demo_data/
