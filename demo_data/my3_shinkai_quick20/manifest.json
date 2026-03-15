@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "change": "add-versecrafter-single-image-multi-trajectory-script",
+  "status": "completed",
+  "created_at": "2026-03-15T15:22:24.661519+00:00",
+  "updated_at": "2026-03-15T15:52:38.014908+00:00",
+  "input": {
+    "input_image_path": "/workspace/VerseCrafter/demo_data/my3/generated-image (1).png",
+    "output_root": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20",
+    "prompt": "in the style of Makoto Shinkai, a frozen-in-time futuristic AI exhibition hall with a glossy white reflective floor, blue digital wall panels, a concept vehicle chassis display, radiant skylight sunbeams, a luminous tunnel corridor, distant technology exhibits, and a crystal-clear summer sky above the glass ceiling. The whole scene is a single perfectly frozen instant. Every reflection, highlight, LED strip, wall screen, sign, shadow, sunbeam, and exhibit remains completely motionless and unchanged for the entire video. Time is stopped. Only the camera moves through the hall. Clean cinematic perspective, delicate atmospheric glow, stable illumination, physically plausible reflections, and coherent lens behavior.",
+    "object_prompt": "person . car . dog . cat .",
+    "transformer_path": "model/VerseCrafter"
+  },
+  "settings": {
+    "camera_only": true,
+    "moge_version": "v2",
+    "moge_pretrained": "/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt",
+    "device": "cuda",
+    "sample_size": "720,1280",
+    "num_inference_steps": 20,
+    "ulysses_degree": 1,
+    "ring_degree": 1,
+    "nproc_per_node": 1,
+    "guidance_scale": 5.0,
+    "seed": 2025,
+    "fps": 16,
+    "gpu_memory_mode": "model_cpu_offload_and_qfloat8",
+    "selected_preset_indices": [
+      0
+    ],
+    "auto_center_depth_quantile": 0.2,
+    "auto_center_depth_center_crop_ratio": 0.5,
+    "translation_reference_depth_scale": 0.95,
+    "total_movement_distance_factor": 1.5,
+    "camera_rotation": "center_facing",
+    "radius_x_factor": 0.15,
+    "radius_y_factor": 0.1,
+    "num_circles": 2,
+    "resume": true
+  },
+  "shared": {
+    "directory": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared",
+    "estimated_depth_dir": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/estimated_depth",
+    "foreground_masks_dir": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/foreground_masks",
+    "masks_dir": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/foreground_masks/masks",
+    "fitted_3d_gaussian_dir": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/fitted_3D_gaussian",
+    "depth_npz": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/estimated_depth/depth_intrinsics.npz",
+    "gaussian_json": "/workspace/VerseCrafter/demo_data/my3_shinkai_quick20/shared/fitted_3D_gaussian/gaussian_params.json",
+    "depth_status": "completed",
+    "segmentation_status": "camera_only_empty",
+    "gaussian_status": "camera_only_empty",
+    "status": "completed",
+    "error": null,
+    "center_depth": 9.078125,
+    "translation_reference_depth": 8.624218749999999
+  },
+  "trajectories": {
+    "0": {
+      "index": 0,
+      "name": "left",
+      "movement_distance_range": [
+        0.2,
+        0.3
+      ],
+      "movement_distance": 0.375,
+      "center_depth": 9.078125,
+      "translation_reference_depth": 8.624218749999999,
+      "directory": "demo_data/my3_shinkai_quick20/0",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/0/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/0/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/0/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/0/generated_videos",
+      "generated_video_path": "demo_data/my3_shinkai_quick20/0/generated_videos/generated_video_0.mp4",
+      "trajectory_assets_status": "completed",
+      "render_status": "completed",
+      "generation_status": "completed",
+      "status": "completed",
+      "error": null
+    },
+    "1": {
+      "index": 1,
+      "name": "right",
+      "movement_distance_range": [
+        0.2,
+        0.3
+      ],
+      "movement_distance": 0.375,
+      "center_depth": null,
+      "translation_reference_depth": null,
+      "directory": "demo_data/my3_shinkai_quick20/1",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/1/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/1/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/1/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/1/generated_videos",
+      "generated_video_path": null,
+      "trajectory_assets_status": "pending",
+      "render_status": "pending",
+      "generation_status": "pending",
+      "status": "pending",
+      "error": null
+    },
+    "2": {
+      "index": 2,
+      "name": "up",
+      "movement_distance_range": [
+        0.1,
+        0.2
+      ],
+      "movement_distance": 0.22500000000000003,
+      "center_depth": null,
+      "translation_reference_depth": null,
+      "directory": "demo_data/my3_shinkai_quick20/2",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/2/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/2/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/2/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/2/generated_videos",
+      "generated_video_path": null,
+      "trajectory_assets_status": "pending",
+      "render_status": "pending",
+      "generation_status": "pending",
+      "status": "pending",
+      "error": null
+    },
+    "3": {
+      "index": 3,
+      "name": "zoom_out",
+      "movement_distance_range": [
+        0.3,
+        0.4
+      ],
+      "movement_distance": 0.5249999999999999,
+      "center_depth": null,
+      "translation_reference_depth": null,
+      "directory": "demo_data/my3_shinkai_quick20/3",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/3/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/3/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/3/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/3/generated_videos",
+      "generated_video_path": null,
+      "trajectory_assets_status": "pending",
+      "render_status": "pending",
+      "generation_status": "pending",
+      "status": "pending",
+      "error": null
+    },
+    "4": {
+      "index": 4,
+      "name": "zoom_in",
+      "movement_distance_range": [
+        0.3,
+        0.4
+      ],
+      "movement_distance": 0.5249999999999999,
+      "center_depth": null,
+      "translation_reference_depth": null,
+      "directory": "demo_data/my3_shinkai_quick20/4",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/4/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/4/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/4/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/4/generated_videos",
+      "generated_video_path": null,
+      "trajectory_assets_status": "pending",
+      "render_status": "pending",
+      "generation_status": "pending",
+      "status": "pending",
+      "error": null
+    },
+    "5": {
+      "index": 5,
+      "name": "clockwise",
+      "movement_distance_range": [
+        0.4,
+        0.6
+      ],
+      "movement_distance": 0.75,
+      "center_depth": null,
+      "translation_reference_depth": null,
+      "directory": "demo_data/my3_shinkai_quick20/5",
+      "trajectory_npz": "demo_data/my3_shinkai_quick20/5/custom_camera_trajectory.npz",
+      "ellipsoid_json": "demo_data/my3_shinkai_quick20/5/custom_3D_gaussian_trajectory.json",
+      "rendering_maps_dir": "demo_data/my3_shinkai_quick20/5/rendering_4D_maps",
+      "generated_videos_dir": "demo_data/my3_shinkai_quick20/5/generated_videos",
+      "generated_video_path": null,
+      "trajectory_assets_status": "pending",
+      "render_status": "pending",
+      "generation_status": "pending",
+      "status": "pending",
+      "error": null
+    }
+  }
+}

@@ -50,6 +50,8 @@ parser.add_argument('--rendering_maps_path', type=str, required=True,
                     help='Path to directory with rendering maps')
 parser.add_argument('--prompt', type=str, required=True,
                     help='Text prompt for video generation')
+parser.add_argument('--negative_prompt', type=str, default=None,
+                    help='Optional negative prompt override for video generation')
 parser.add_argument('--input_image_path', type=str, required=True,
                     help='Path to input image')
 parser.add_argument('--num_inference_steps', type=int, default=50,
@@ -66,6 +68,19 @@ parser.add_argument('--seed', type=int, default=2025,
                     help='Random seed for generation')
 parser.add_argument('--fps', type=int, default=16,
                     help='Frames per second for output video')
+parser.add_argument(
+    '--gpu_memory_mode',
+    type=str,
+    default='model_full_load',
+    choices=[
+        'model_full_load',
+        'model_full_load_and_qfloat8',
+        'model_cpu_offload',
+        'model_cpu_offload_and_qfloat8',
+        'sequential_cpu_offload',
+    ],
+    help='GPU memory strategy used during VerseCrafter inference',
+)
 args = parser.parse_args()
 
 # Parse sample_size from string to list
@@ -86,7 +101,7 @@ sample_size = [int(x) for x in args.sample_size.split(',')]
 # 
 # sequential_cpu_offload means that each layer of the model will be moved to the CPU after use, 
 # resulting in slower speeds but saving a large amount of GPU memory.
-GPU_memory_mode     = "model_full_load"
+GPU_memory_mode     = args.gpu_memory_mode
 # Multi GPUs config
 # Please ensure that the product of ulysses_degree and ring_degree equals the number of GPUs used. 
 # For example, if you are using 8 GPUs, you can set ulysses_degree = 2 and ring_degree = 4.
@@ -161,8 +176,8 @@ end_image               = None
 subject_ref_images      = None
 
 # Adding words such as "quiet, solid" to the neg prompt can increase dynamism.
-prompt              = args.prompt
-negative_prompt = (
+prompt = args.prompt
+default_negative_prompt = (
     "Bright tones, overexposed, static, blurred details, subtitles, style, works, "
     "paintings, images, static, overall gray, worst quality, low quality, JPEG "
     "compression residue, ugly, incomplete, extra fingers, poorly drawn hands, "
@@ -170,6 +185,7 @@ negative_prompt = (
     "still picture, messy background, three legs, many people in the background, "
     "walking backwards"
 )
+negative_prompt = args.negative_prompt or default_negative_prompt
 
 guidance_scale          = args.guidance_scale
 seed                    = args.seed

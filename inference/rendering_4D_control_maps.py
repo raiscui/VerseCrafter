@@ -44,7 +44,7 @@ from pytorch3d.renderer import (
     PointLights,
 )
 from pytorch3d.utils import ico_sphere
-from torchvision.io import write_video, read_video
+from torchvision.io import read_video
 import torchvision.transforms.functional as TF
 
 logger = logging.getLogger(__name__)
@@ -459,6 +459,10 @@ def save_video_from_frames(
 ):
     """Save a list of image frames as an MP4 video.
     
+    当前环境里 `torchvision.io.write_video` 会因为 `PyAV` 版本兼容问题,
+    在设置 `pict_type` 时抛 `TypeError: an integer is required`.
+    这里改用更稳定的 `cv2.VideoWriter`, 避免把整条 Step 5 卡死在视频编码阶段.
+    
     Args:
         frames: List of image tensors (H, W, 3)
         output_path: Output video file path
@@ -468,21 +472,31 @@ def save_video_from_frames(
         logger.warning(f"No frames to save for {output_path}")
         return
     
-    # Convert grayscale to RGB if needed
     first_frame = frames[0]
     if first_frame.ndim == 2:
         frames = [f.unsqueeze(-1).repeat(1, 1, 3) for f in frames]
-    
-    frames_tensor = torch.stack(frames)
-    
+
+    first_frame_np = frames[0].detach().cpu().numpy()
+    if first_frame_np.dtype != np.uint8:
+        first_frame_np = np.clip(first_frame_np, 0, 255).astype(np.uint8)
+
+    height, width = first_frame_np.shape[:2]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_video(
-        str(output_path),
-        frames_tensor.cpu(),
-        fps=fps,
-        video_codec='h264',
-        options={"crf": "18"}  # Quality setting (lower = better, but larger file)
-    )
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    if not writer.isOpened():
+        raise RuntimeError(f"Failed to open video writer for {output_path}")
+
+    try:
+        for frame in frames:
+            frame_np = frame.detach().cpu().numpy()
+            if frame_np.dtype != np.uint8:
+                frame_np = np.clip(frame_np, 0, 255).astype(np.uint8)
+            frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+            writer.write(frame_bgr)
+    finally:
+        writer.release()
 
 def visualize_depth_as_grayscale(
     depth_frames: List[torch.Tensor],

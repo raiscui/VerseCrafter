@@ -13,6 +13,7 @@ cmake = "*"
 ninja = "*"
 setuptools = "*"
 wheel = "*"
+pytest = "*"
 
 # 与 Grounded-SAM-2 / SAM2 约束对齐, 避免安装时再被 pip 回滚或升级.
 pytorch = "2.3.1.*"

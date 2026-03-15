@@ -218,6 +218,216 @@
 
 ### 当前判断
 - `record.mov` 是 Blender 阶段的演示/预览类产物这一点, 目前有较强证据支持, 但仓库里没有直接代码写出它, 因此表述时应标成“高可信推断”, 不写成代码级已确认事实.
+
+## [2026-03-15 11:48:44 UTC] “时间静止”重跑前的最小验证设计
+
+### 现象
+- 用户在 `camera_only` 模式下观察到最终视频里人物和车辆仍有运动.
+- 当前共享数据已经切到空前景版本:
+  - `demo_data/my/shared/fitted_3D_gaussian/gaussian_params.json` 中 `num_objects = 0`
+  - `demo_data/my/0/custom_3D_gaussian_trajectory.json` 中 `metadata.num_objects = 0`
+- `single_image_multi_trajectory.py` 当前默认:
+  - `--num_inference_steps = 30`
+  - `--negative_prompt` 仍是通用低质负面词, 只有少量 `static`、`walking backwards` 等描述.
+
+### 主假设
+- `camera_only` 已经正确移除了显式前景运动链路.
+- 但 VerseCrafter 在 Step 6 仍会基于视频先验自行补出人物/车流的细小运动.
+- 因此, 当前问题更像“生成条件约束不足”, 不是“前景轨迹文件还在偷偷驱动物体”.
+
+### 最强备选解释
+- 备选解释1: Step 5 控制图里仍残留了会诱导运动的信号, 即使 `num_objects = 0` 也会让模型倾向输出动态人物.
+- 备选解释2: 当前 seed / guidance / 采样步数组合过弱, 即使 prompt 已经强调静止, 模型仍然会漂.
+
+### 会推翻主假设的证据
+- 如果仅重跑 Step 6, 只修改 prompt / negative prompt / `num_inference_steps`, 人物运动依旧和之前几乎一致, 那说明问题不只是文本条件太弱.
+- 如果换更强文本约束后, 人物运动明显收敛, 那就支持“问题主要在 Step 6 条件不足”的判断.
+
+### 验证计划
+- 先复用 `demo_data/my/0/rendering_4D_maps`.
+- 只清理并重跑 `demo_data/my/0/generated_videos`.
+- 使用更强的“时间静止” prompt:
+  - 明确写出 `Every person, car, motorcycle, and object is perfectly motionless`
+  - 明确写出 `Time is stopped`
+  - 明确写出 `Only the camera moves through the scene`
+- 使用更强的 negative prompt:
+  - 显式压制 `walking`, `body motion`, `wheel rotation`, `cloth flutter`, `subject motion`, `pose change`
+- 把 `--num_inference_steps` 调到 `40`.
+- 其余保持不变:
+  - `--camera_only` 的 Step 1-5 产物继续复用
+  - `--gpu_memory_mode model_cpu_offload_and_qfloat8`
+  - `--seed 2025`
+  - `--guidance_scale 5.0`
+
+### 当前结论
+- 现在最有价值的动作, 不是继续怀疑“是不是复制了 demo”, 也不是重做 Step 1-5.
+- 最小实验应该先盯住 Step 6, 看“更强冻结条件 + 40 steps”能否把人物运动明显压下去.
+
+## [2026-03-15 12:46:40 UTC] 0 号轨迹“时间静止”实验的动态结果
+
+### 验证命令
+- 实际执行:
+  - `pixi run python inference/versecrafter_inference.py --transformer_path model/VerseCrafter --save_path demo_data/my/0/generated_videos_timefreeze_test_40steps --rendering_maps_path demo_data/my/0/rendering_4D_maps --prompt "<更强 frozen-in-time prompt>" --negative_prompt "<更强 motion suppression negative>" --input_image_path demo_data/my/0001.png --num_inference_steps 40 --sample_size 720,1280 --ulysses_degree 1 --ring_degree 1 --guidance_scale 5.0 --seed 2025 --fps 16 --gpu_memory_mode model_cpu_offload_and_qfloat8`
+
+### 动态证据
+- 运行过程中观察到:
+  - 权重初始化完成
+  - 采样进度从 `0/40` 持续推进到 `40/40`
+  - 未出现新的导入错误
+  - 未出现 OOM
+- 终端最终输出:
+  - 生成 prompt 原文
+  - `demo_data/my/0/generated_videos_timefreeze_test_40steps/generated_video_0.mp4`
+
+### 输出校验
+- `ffprobe` 验证新视频:
+  - 编码: `h264`
+  - 分辨率: `1280x720`
+  - 帧率: `16 fps`
+  - 帧数: `81`
+  - 时长: `5.0625s`
+- 文件大小对照:
+  - 旧版 `demo_data/my/0/generated_videos/generated_video_0.mp4`: `2321468`
+  - 新版 `demo_data/my/0/generated_videos_timefreeze_test_40steps/generated_video_0.mp4`: `2020749`
+
+### 可视化辅助证据
+- 已生成整帧接触图:
+  - `demo_data/my/0/generated_videos/frames_contact_sheet.jpg`
+  - `demo_data/my/0/generated_videos_timefreeze_test_40steps/frames_contact_sheet.jpg`
+- 已生成局部裁剪接触图:
+  - `demo_data/my/0/generated_videos/pedestrian_crop_sheet_v2.jpg`
+  - `demo_data/my/0/generated_videos_timefreeze_test_40steps/pedestrian_crop_sheet_v2.jpg`
+- 已生成并排对照视频:
+  - `demo_data/my/0/timefreeze_compare_old_vs_new.mp4`
+
+### 观察与边界
+- 从接触图能看出新视频已成功生成, 且整体构图与镜头运动保持稳定.
+- 但因为镜头本身始终在移动, 仅靠抽帧接触图, 不能充分证明“人物已经完全不动”.
+- 因此目前最诚实的结论是:
+  - “新的冻结条件已成功落地并产出样本”
+  - “是否达到用户要的绝对时间静止, 仍应以播放 `timefreeze_compare_old_vs_new.mp4` 的主观观感为最终判断”
+
+## [2026-03-15 12:54:30 UTC] 新场景验证前的设计补充
+
+### 现象
+- 用户要求:
+  - 进一步增强“时间静止”提示词
+  - 换用新场景 `demo_data/my2/10000.png`
+- 当前脚本缺少“只跑指定轨迹”的正式入口.
+- 现有 40 步单条样本实测约 `42 分 53 秒`, 若新场景直接全量 6 条, 时间成本会很高.
+
+### 主假设
+- 这轮更合适的落地方式是:
+  1. 先给脚本补一个 `--preset_indices` 能力
+  2. 再用新场景只跑 `0` 号轨迹做真实验证
+- 这样既不会破坏现有 6 轨迹默认行为, 也能把 prompt 迭代成本压下来.
+
+### 最强备选解释
+- 备选解释: 不改脚本, 直接手写一套新场景的 Step 1 / Step 5 / Step 6 命令也能完成验证.
+- 之所以不优先走这个方案, 是因为后面大概率还要继续调 prompt 或扩到 1-5, 没有 subset 入口会反复支付人工成本.
+
+### 当前结论
+- 给批处理脚本增加一个轻量的 subset 参数, 是这轮最划算的改良.
+- 新场景验证输出应独立于 `demo_data/my2/` 原图目录, 以免输入图和生成目录混在一起.
+
+## [2026-03-15 13:52:30 UTC] 新场景 `demo_data/my2/10000.png` 的时间静止验证结果
+
+### 代码改动验证
+- 新增 CLI 子集参数:
+  - `--preset_indices 0 5`
+- 测试结果:
+  - `pixi run python -m pytest tests/test_single_image_multi_trajectory_smoke.py tests/test_single_image_multi_trajectory_lib.py`
+  - 结果: `13 passed`
+- dry-run 结果确认:
+  - `selected_preset_indices: [0]`
+  - 只展示 `0` 号轨迹, 不再展示 `1-5`
+
+### 新场景运行中的现象
+- 直接使用默认 `moge_version=v2` 时, Step 1 会去拉:
+  - `Ruicheng/moge-2-vitl-normal`
+- 终端进度条长时间停在 `0.00/1.32G`, 但进一步查看 `~/.cache/huggingface/xet/logs/...` 可见底层字节数在持续增长.
+- 本地已存在完整缓存:
+  - `Ruicheng/moge-2-vitl`
+  - 路径: `/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt`
+
+### 验证结论
+- `--moge_pretrained` 需要传具体文件路径, 不能传目录.
+- 正确命令中使用:
+  - `--moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt`
+- 这样可以直接绕过远程下载瓶颈, 并成功完成 Step 1.
+
+### 新场景动态证据
+- 实际执行:
+  - `pixi run python inference/single_image_multi_trajectory.py ... --camera_only --preset_indices 0 --num_inference_steps 40 --moge_pretrained <local model.pt> ...`
+- 动态结果:
+  - Step 1 深度估计成功
+  - Step 5 渲染时明确输出 `Loaded 0 mask files`
+  - Step 5 明确输出 `No objects detected; generated empty Gaussian projection video`
+  - Step 6 成功从 `0/40` 跑到 `40/40`
+  - 最终视频落盘:
+    - `demo_data/my2_timefreeze_10000/0/generated_videos/generated_video_0.mp4`
+
+### 输出校验
+- `ffprobe` 结果:
+  - 编码: `h264`
+  - 分辨率: `1280x720`
+  - 帧率: `16 fps`
+  - 帧数: `81`
+  - 时长: `5.0625s`
+- `manifest.json` 结果:
+  - `status = completed`
+  - `selected_preset_indices = [0]`
+  - `shared.status = completed`
+  - `trajectory_0.status = completed`
+  - `center_depth = 7.81640625`
+  - `translation_reference_depth = 7.425585937499999`
+
+### 可视化辅助证据
+- 已生成新场景接触图:
+  - `demo_data/my2_timefreeze_10000/0/generated_videos/frames_contact_sheet.jpg`
+- 从接触图看, 画面主体是室内展厅和静态展陈, 没有明显人物或车流这种高风险独立运动源.
+- 当前更接近“镜头在动, 场景本体保持冻结”的目标.
+
+## [2026-03-15 14:17:31 UTC] `moge-2-vitl-normal` 与 `moge-2-vitl` 的差异核对
+
+### 现象
+- 本项目的 `inference/moge-v2_infer.py` 默认把 `v2` 映射到:
+  - `Ruicheng/moge-2-vitl-normal`
+- 我在新场景验证时为了绕开慢下载, 临时改用了本机已缓存的:
+  - `Ruicheng/moge-2-vitl`
+- 用户质疑这个替代是否合理.
+
+### 静态证据
+- [moge-v2_infer.py](/workspace/VerseCrafter/inference/moge-v2_infer.py#L60) 到 [moge-v2_infer.py](/workspace/VerseCrafter/inference/moge-v2_infer.py#L66):
+  - 默认 `v2 -> Ruicheng/moge-2-vitl-normal`
+- [v2.py](/workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/moge/model/v2.py#L30) 到 [v2.py](/workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/moge/model/v2.py#L36):
+  - `MoGeModel` 结构里 `normal_head` 是可选头
+- [v2.py](/workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/moge/model/v2.py#L165) 到 [v2.py](/workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/moge/model/v2.py#L190):
+  - 模型只会在有 `normal_head` 时返回 `normal`
+- [moge-v2_infer.py](/workspace/VerseCrafter/inference/moge-v2_infer.py#L129) 到 [moge-v2_infer.py](/workspace/VerseCrafter/inference/moge-v2_infer.py#L165):
+  - 当前项目真正落盘给下游的是 `depth_intrinsics.npz`
+  - `normal.png` 的写出代码其实被注释掉了
+- [rendering_4D_control_maps.py](/workspace/VerseCrafter/inference/rendering_4D_control_maps.py#L958) 到 [rendering_4D_control_maps.py](/workspace/VerseCrafter/inference/rendering_4D_control_maps.py#L961):
+  - Step 5 只从 NPZ 里读取 `depth` 和 `intrinsic`
+
+### 官方资料证据
+- 官方 MoGe README 的预训练模型表写明:
+  - `Ruicheng/moge-2-vitl`: `Metric scale = yes`, `Normal = no`
+  - `Ruicheng/moge-2-vitl-normal`: `Metric scale = yes`, `Normal = yes`
+- 同一份官方 README 还明确说明:
+  - `moge-2-vitl-normal` 提供完整能力
+  - 与 `moge-2-vitl` 性能几乎同级, 但额外多了 normal estimation
+
+### 已验证结论
+- 结论1:
+  - 这个项目当前“默认想用”的确实是 `moge-2-vitl-normal`, 不是我瞎猜的.
+- 结论2:
+  - `moge-2-vitl` 和 `moge-2-vitl-normal` 不是同一个模型, 不能表述成“完全等价”.
+- 结论3:
+  - 但在 VerseCrafter 当前这条链路里, 下游实际只消费 `depth` 和 `intrinsic`, 没有消费 `normal`.
+  - 因此把 `moge-2-vitl` 作为“临时绕开下载阻塞的 fallback”是有工程依据的.
+- 结论4:
+  - 这个 fallback 只能表述成“对当前下游契约来说大概率可用且有官方近似性能说明支持”, 不能表述成“和默认模型完全一样”.
 - 如果用户只想控制相机, 依然需要导出相机轨迹; 在当前官方工作流里, 同时也需要保留/导出 `custom_3D_gaussian_trajectory.json`, 因为 Step 5 渲染脚本和 Blender 插件都要求它存在.
 
 ## [2026-03-15 07:45:30 UTC] object_mask 用途待核对
@@ -390,3 +600,408 @@
   - 保留其 `trajectory_npz` 与 `rendering_4D_maps`
   - 记录失败状态与命令参数, 方便仅重跑 Step 6
 - 若 `num_objects == 0`, 第一版建议直接 fail-fast 并明确报错, 不在第一版支持“纯背景 0 对象”自动分支.
+
+## [2026-03-15 08:53:30 UTC] proposal 起草决策
+
+### 新 capability 命名
+- `single-image-multi-trajectory-generation`
+  - 含义: 为 VerseCrafter 新增一个单图输入、多条固定相机轨迹、共享预处理一次的自动化生成工作流.
+
+### 不声明 modified capabilities 的原因
+- 当前 VerseCrafter 仓库刚初始化 OpenSpec, `openspec/specs/` 为空.
+- 本次需求更适合作为新增 capability 落地, 而不是伪造一个“修改现有 spec”的关系.
+
+## [2026-03-15 09:26:40 UTC] OpenSpec design 前的最终静态证据
+
+### OpenSpec artifact 指令约束
+- `design.md` 需要覆盖:
+  - `Context`
+  - `Goals / Non-Goals`
+  - `Decisions`
+  - `Risks / Trade-offs`
+  - 另外 instruction 还要求补上 `Migration Plan` 与 `Open Questions`
+- `specs` 需要为 proposal 中每个 capability 建一个 `specs/<capability>/spec.md`
+- `tasks.md` 必须使用 `- [ ] X.Y ...` 的复选框格式, 否则 apply 阶段不会识别
+
+### 关键源码证据
+- `inference/blender_script/export_blender_custom_trajectories.py`
+  - Blender 导出相机轨迹时, 直接保存 `np.savez(..., extrinsics=extrinsics_array)`
+  - 注释和代码都表明该矩阵是 Blender 坐标系下的 camera-to-world
+- `inference/rendering_4D_control_maps.py::load_camera_trajectory`
+  - 读取 `extrinsics`
+  - 对 `:,:3,1:3` 做轴翻转后求逆, 转成 OpenCV world-to-camera
+  - 说明自动脚本最稳的兼容方式, 是直接产出 Blender c2w 轨迹文件, 而不是绕过它去猜渲染端内部坐标
+- `inference/fit_3D_gaussian.py`
+  - 输出 `gaussian_params.json`
+  - 顶层格式是 `gaussian_params` + `num_objects` + `obj_id_to_color_idx`
+  - 这不是渲染端所需的多帧格式
+- `inference/rendering_4D_control_maps.py::load_ellipsoid_parameters`
+  - 明确要求 JSON 含 `metadata.num_frames`、`metadata.num_objects`、`metadata.obj_id_to_color_idx`
+  - 以及 `frames[].frame_index`、`frames[].objects[].gaussian_3d.mean/covariance`
+  - 因此第一版必须做“单帧高斯参数广播成静态多帧轨迹 JSON”的适配层
+- `inference/versecrafter_inference.py`
+  - 最终读取控制图目录中的 `background_RGB.mp4`、`background_depth.mp4`、`3D_gaussian_RGB.mp4`、`3D_gaussian_depth.mp4`
+  - 同时读取 `merged_mask.mp4`
+  - 生成结果以 `generated_video_<index>.mp4` 命名保存在 `save_path`
+
+### design 里应明确的文件约定
+- 新增 orchestrator 脚本位于 `inference/`
+- 根输出目录下保留共享预处理产物, 以及 `0..5` 六个数字轨迹目录
+- 根目录生成 `manifest.json`, 用于轨迹名映射、距离、中心深度和阶段状态记录
+
+## [2026-03-15 09:38:40 UTC] Lyra 默认轨迹参数与 VerseCrafter 设计对齐结论
+
+### Lyra 文档与源码确认
+- `/workspace/lyra/docs/multi_trajectory_camera_implementation.md` 明确了 6 条 preset:
+  - `left`
+  - `right`
+  - `up`
+  - `zoom_out`
+  - `zoom_in`
+  - `clockwise`
+- Lyra 的 preset 区间分别是:
+  - left/right: `[0.2, 0.3]`
+  - up: `[0.1, 0.2]`
+  - zoom_out/zoom_in: `[0.3, 0.4]`
+  - clockwise: `[0.4, 0.6]`
+- Lyra 原始实现会随机采样 `movement_distance`, 但本次 VerseCrafter 设计改为“区间中值 × factor”确定性策略.
+
+### Lyra 默认调参语义
+- `estimate_trajectory_center_depth(...)` 默认使用:
+  - `mode = center_crop`
+  - `depth_quantile = 0.5`
+  - `center_crop_ratio = 0.5`
+  - `fallback_depth = 1.0`
+- `_resolve_trajectory_center_depth(...)` 会在估计值上再乘 `auto_center_depth_scale`
+- `_resolve_translation_reference_depth(...)` 会在 auto center 开启时优先使用:
+  - `center_depth * translation_reference_depth_scale`
+- 因此:
+  - `center_depth` 决定 look-at center
+  - `translation_reference_depth` 只决定位移尺度
+  - `total_movement_distance_factor` 决定 preset 距离整体放大倍数
+
+### 本次 OpenSpec 最终落定内容
+- `design.md` 已明确采用 `inference/single_image_multi_trajectory.py` 作为 orchestrator.
+- `specs/single-image-multi-trajectory-generation/spec.md` 已把共享预处理、固定 6 轨迹、默认深度参数、Blender 兼容轨迹文件、manifest 和 0-object fail-fast 写成 REQUIREMENTS.
+- `tasks.md` 已拆成 6 组实现任务, 可直接进入 apply / implementation 阶段.
+
+## [2026-03-15 10:18:10 UTC] OpenSpec apply 实现阶段结论
+
+### 本轮新增文件
+- `inference/single_image_multi_trajectory.py`
+- `inference/single_image_multi_trajectory_lib.py`
+- `tests/conftest.py`
+- `tests/test_single_image_multi_trajectory_lib.py`
+- `tests/test_single_image_multi_trajectory_smoke.py`
+
+### 关键实现点
+- 新增 `single_image_multi_trajectory_lib.py` 作为纯函数核心层, 负责:
+  - 6 条 preset 表与确定性 `movement_distance`
+  - 中心裁剪深度分位数估计
+  - `translation_reference_depth = center_depth * scale`
+  - OpenCV -> Blender 向量/协方差变换
+  - Blender `camera-to-world` 轨迹矩阵生成
+  - 单帧 `gaussian_params.json` -> 多帧 `custom_3D_gaussian_trajectory.json`
+  - render 输出完整性和生成视频发现
+- 新增 `single_image_multi_trajectory.py` 作为 orchestrator, 负责:
+  - 共享 Step 1-3
+  - 6 条轨迹目录 `0..5`
+  - per-preset Step 5/6
+  - `manifest.json`
+  - resume / skip 逻辑
+- 修改 `inference/versecrafter_inference.py`
+  - 新增 `--negative_prompt`
+  - 若未传则继续回退到原来的默认 negative prompt
+
+### 一个重要设计修正
+- 之前 design 里把 VerseCrafter / Blender 坐标下的 `up` 写成了 `z` 负方向.
+- 结合 `COORD_TRANSFORM_CV2BLENDER` 与 Lyra 的 OpenCV `y` 负方向平移公式重新核对后, 正确映射应为:
+  - `up` -> Blender `z` 正方向
+- 该文档已同步修正, 单测也已经锁定这个方向关系.
+
+### 验证结果
+- `python3 -m py_compile inference/single_image_multi_trajectory_lib.py inference/single_image_multi_trajectory.py inference/versecrafter_inference.py`
+  - 通过
+- `python3 -m pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 7 项测试全部通过
+- `python3 inference/single_image_multi_trajectory.py --help`
+  - CLI 正常输出
+- `openspec status --change add-versecrafter-single-image-multi-trajectory-script`
+  - artifacts 全完成
+
+### 当前未做的事
+- 没有执行真实 Step 5 / Step 6 的重量级模型推理, 因为当前环境缺少 `diffusers` 等运行依赖.
+- 但新 orchestrator 的 resume smoke test 已覆盖:
+  - 目录契约
+  - manifest 状态收敛
+  - 6 条轨迹完成态跳过逻辑
+
+## [2026-03-15 10:25:00 UTC] Step 5 视频写出修复验证准备
+
+### 现象
+- 上一轮真实测试已经跑通 Step 1-4, 并在 Step 5 写出 `rendering_4D_maps/*.mp4` 时失败.
+- 报错栈指向 `torchvision.io.write_video` -> `av.video.frame.VideoFrame.pict_type.__set__` -> `TypeError: an integer is required`.
+
+### 当前主假设
+- 主假设: 当前环境中的 `torchvision` 与 `av` 版本组合在 `write_video` 路径上存在兼容问题, 与当前 orchestrator 无关.
+- 备选解释: 也可能是传给 `write_video` 的 frame dtype / shape / contiguous 状态异常, 只是刚好在 `av` 内部暴露.
+
+### 最小验证计划
+1. 先阅读 `save_video_from_frames()` 当前实现, 确认改动是否完整移除了 `write_video`.
+2. 用最小样本帧调用该函数, 验证 `cv2.VideoWriter` 是否能独立成功写出 mp4.
+3. 若最小验证成功, 再恢复真实链路运行, 观察 Step 5 是否通过.
+4. 若仍失败, 回到现象 -> 假设 -> 验证计划流程继续缩小范围.
+
+## [2026-03-15 10:29:00 UTC] Step 5 写视频最小验证结果
+
+### 已验证事实
+- `save_video_from_frames()` 当前确实已经完全移除了 `torchvision.io.write_video`.
+- `cv2.VideoWriter` + `mp4v` 在当前 pixi 环境可成功写出 mp4.
+- 写出后的 mp4 可被 `torchvision.io.read_video` 正常读回, 说明至少容器和基础编码没有立即损坏.
+
+### 当前结论
+- 之前的失败现象至少不再能通过最小样本复现.
+- 这还不能直接证明真实 Step 5 已完全修好, 但已经证明“新的写视频实现本身可工作”.
+- 下一步需要真实跑 Step 5/6, 检查大分辨率、多段视频、后续推理消费链路是否正常.
+
+## [2026-03-15 10:33:00 UTC] 真实测试中的新阻塞: Step 6 缺少 librosa
+
+### 已观察到的事实
+- `rendering_4D_control_maps.py` 在真实测试里已经成功执行完成.
+- 失败发生在 `versecrafter_inference.py` 启动阶段, 不是 Step 5.
+- 精确堆栈:
+  - `from videox_fun.models import (AutoencoderKLWan, AutoTokenizer, WanT5EncoderModel)`
+  - 进入 `third_party/VideoX-Fun/videox_fun/models/__init__.py`
+  - 再导入 `fantasytalking_audio_encoder.py`
+  - 最终 `import librosa` 失败.
+
+### 当前主假设
+- 主假设: 当前 pixi / requirements 环境缺少 `librosa`, 而 `VideoX-Fun` 的模型包在 `__init__` 中做了全量导入, 导致无音频推理路径也被音频依赖阻塞.
+- 备选解释: 也可能仓库原本假定 `librosa` 由某个未声明的间接依赖提供, 只是 pixi 让这个隐式依赖暴露出来.
+
+### 验证方向
+1. 看 `requirements.txt`、`pixi.toml`、`third_party/VideoX-Fun` 自身依赖文件是否声明 `librosa`.
+2. 看 `versecrafter_inference.py` 实际使用的模型类型, 判断是否真的需要 `FantasyTalkingAudioEncoder`.
+3. 如果不需要, 优先消除无关强导入; 如果确实需要, 再补齐环境依赖.
+
+## [2026-03-15 10:47:00 UTC] Step 6 导入阻塞修复后的验证结论
+
+### 已验证事实
+- `third_party/VideoX-Fun/videox_fun/models/__init__.py` 现在把音频编码器改成了可选依赖导入.
+- 当前环境缺少 `librosa` 时:
+  - 非音频类 `AutoencoderKLWan`、`WanT5EncoderModel`、`WanVerseCrafterPipeline` 仍可正常导入.
+  - 音频类 `FantasyTalkingAudioEncoder`、`WanAudioEncoder` 会在实例化时抛出清晰的 `ModuleNotFoundError`.
+- 当前 pixi 默认环境已补入 `pytest`, 并通过 8 条测试.
+
+### 当前结论
+- 这次修复解决的是“包初始化把可选音频依赖变成硬阻塞”的问题.
+- 对 VerseCrafter 当前单图相机轨迹生成工作流来说, 这是比直接安装 `librosa` 更准确的修复.
+
+## [2026-03-15 10:36:00 UTC] Step 6 显存模式实验结论
+
+### 已观察到的事实
+- `model_full_load` 在 A800 80GB 上会在采样初期 OOM.
+- `model_cpu_offload` 把基线显存降下来了, 但没有解决瞬时大块显存申请失败.
+- `model_cpu_offload_and_qfloat8` 是当前唯一已被动态验证通过的模式.
+
+### 当前结论
+- 这次真正起作用的不是“仅 offload”, 而是“offload + transformer qfloat8”.
+- 因此批处理默认值应该直接指向这个已验证模式, 否则用户按默认参数仍会踩 OOM.
+
+## [2026-03-15 11:22:00 UTC] 关于“是不是抄 demo 输出”的最终证据
+
+### 现象
+- 用户观察到 `demo_data/my/shared/fitted_3D_gaussian` 和 demo 很像, 怀疑是直接拷贝.
+
+### 验证
+- 动态 / 文件证据:
+  - `sha256sum demo_data/my/0001.png demo_data/LXK.../0001.png`
+  - 结果完全一致, 说明当前测试输入图就是 demo 那张图.
+- 静态代码证据:
+  - `single_image_multi_trajectory.py` 会调用 `inference/fit_3D_gaussian.py` 重新拟合 `shared/fitted_3D_gaussian/gaussian_params.json`.
+  - `custom_3D_gaussian_trajectory.json` 由 `convert_static_gaussian_json_to_trajectory()` 从共享 `gaussian_params.json` 广播生成.
+- 轨迹差异证据:
+  - my 版本 `custom_3D_gaussian_trajectory.json` 同一对象 frame0 == frame1, 是静态轨迹.
+  - demo 版本同一对象 frame0 != frame1, 是动态轨迹.
+
+### 结论
+- `shared/fitted_3D_gaussian` 看起来像 demo, 主要因为输入图本来就是同一张图, 不是因为脚本偷拷 demo 结果.
+- `custom_3D_gaussian_trajectory.json` 当前也不是抄 demo 的动态前景轨迹, 而是我们自己从静态 Gaussian 参数广播出来的静态版本.
+- 但用户“不需要前景运动”这一需求是成立的, 因此继续保留前景链路仍然不合适.
+
+## [2026-03-15 11:22:00 UTC] camera-only 模式实现结论
+
+### 实现内容
+- 新增 `--camera_only`.
+- 在该模式下:
+  - 跳过 Grounded-SAM-2 segmentation
+  - 跳过 `fit_3D_gaussian.py`
+  - 创建空 mask 目录
+  - 创建 `num_objects=0` 的 `gaussian_params.json`
+  - 为每条轨迹生成空对象的 `custom_3D_gaussian_trajectory.json`
+
+### 为什么这样更对
+- 这样 Step 5 会把整张图都放进背景点云.
+- 人车会作为背景的一部分 rigid 地跟着相机走, 而不是被当成独立前景对象处理.
+- 这更贴近用户“只做相机运动”的真实需求.
+
+## [2026-03-15 11:50:00 UTC] 时间静止需求的当前判断
+
+### 现象
+- 用户明确反馈: 即使在纯相机模式下, 人物仍然在动.
+
+### 当前判断
+- `camera_only` 已经保证没有显式前景轨迹和前景 Gaussian.
+- 但 VerseCrafter 仍然可能基于 prompt 和视频先验, 自发补出人物微动.
+- 因此下一步要验证的不是几何链路, 而是“更强时间静止语义 + 更高步数”是否足以压住这种自发运动.
+
+## [2026-03-15 14:18:00 UTC] `moge-2-vitl-normal` vs `moge-2-vitl` 在当前仓库中的真实使用范围
+
+### 现象
+- 仓库里有两处默认把 MoGe v2 指向 `Ruicheng/moge-2-vitl-normal`:
+  - `inference/moge-v2_infer.py`
+  - `api_server.py`
+- 但当前 VerseCrafter 主工作流 Step 1 之后真正传递给下游的核心产物是:
+  - `depth_intrinsics.npz`
+  - 内容只有 `depth` 和 `intrinsic`
+
+### 静态证据
+- `inference/moge-v2_infer.py`
+  - 默认模型:
+    - `v2 -> Ruicheng/moge-2-vitl-normal`
+  - 推理后读取:
+    - `points`, `depth`, `mask`, `intrinsics`
+    - `normal` 仅在 `output` 存在时可选读取
+  - `--maps` 路径实际只落盘:
+    - `depth_vis.png`
+    - `depth_gray.png`
+    - `depth_intrinsics.npz`
+  - `normal.png` 保存逻辑当前被注释掉了
+- `inference/fit_3D_gaussian.py`
+  - 只从 NPZ 读取:
+    - `depth`
+    - `intrinsic`
+- `inference/rendering_4D_control_maps.py`
+  - 也只从 NPZ 读取:
+    - `depth`
+    - `intrinsic`
+- `inference/single_image_multi_trajectory.py`
+  - Step 1 调 `moge-v2_infer.py --maps`
+  - Step 3 / Step 5 都只消费 `depth_intrinsics.npz`
+- `api_server.py`
+  - 预处理 Step 1 同样只保存 `depth_intrinsics.npz` 和 `depth_vis.png`
+  - 没有保存或传递 `normal`
+
+### 上游官方证据
+- Microsoft MoGe README 明确写了:
+  - `Ruicheng/moge-2-vitl` = metric scale, 无 normal
+  - `Ruicheng/moge-2-vitl-normal` = metric scale + normal
+  - 备注: `moge-2-vitl-normal` 与 `moge-2-vitl` 性能几乎相同, 只是额外提供 normal map estimation
+- 同一 README 还写了 `output["normal"]` 是 optional, 且只对 `MoGe-2-normal` 可用
+
+### 动态证据
+- 当前仓库已有两次真实运行 manifest 明确记录使用了本地:
+  - `/root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/.../model.pt`
+- 且相关产物实际存在:
+  - `demo_data/my/shared/estimated_depth/depth_intrinsics.npz`
+  - `demo_data/my/0/generated_videos/generated_video_0.mp4`
+  - `demo_data/my2_timefreeze_10000/shared/estimated_depth/depth_intrinsics.npz`
+  - `demo_data/my2_timefreeze_10000/0/generated_videos/generated_video_0.mp4`
+
+### 当前结论
+- 对当前 VerseCrafter 主链路来说, normal 目前没有被真正消费.
+- 因此把 `moge-2-vitl` 作为临时 `--moge_pretrained` 替代, 对现有多轨迹 / camera-only / API 预处理深度链路是妥当的.
+- 但它不是“全仓库无差别等价替换”:
+  - 如果以后恢复 `normal.png` 导出
+  - 或更依赖 `--glb` / `--ply` 的法线质量
+  - 或新增下游直接读取 `output["normal"]`
+  那么 `moge-2-vitl-normal` 仍然更完整.
+
+## [2026-03-15 14:49:00 UTC] 新场景 0 号轨迹 10 步对比样本补跑完成
+
+### 现象
+- 用户已经确认继续采用 `moge-2-vitl` 临时 fallback.
+- 现有 40 步样本位于:
+  - `demo_data/my2_timefreeze_10000/0/generated_videos/generated_video_0.mp4`
+- 10 步样本按要求输出到独立目录:
+  - `demo_data/my2_timefreeze_10000/0/generated_videos_steps10_compare/generated_video_0.mp4`
+
+### 验证
+- 静态证据:
+  - 本次仅复用了已有:
+    - `demo_data/my2_timefreeze_10000/0/rendering_4D_maps`
+  - prompt / negative prompt 与 40 步版保持一致, 只把 `--num_inference_steps` 从 `40` 改成 `10`.
+- 动态证据:
+  - 10 步采样实际进度:
+    - `1/10` 出现在 `01:39`
+    - `5/10` 出现在 `07:08`
+    - `10/10` 出现在 `14:00`
+  - `ffprobe` 结果表明 10 步视频为:
+    - `1280x720`
+    - `16 fps`
+    - `81 frames`
+    - `5.0625s`
+  - 与 40 步版元数据一致, 可以逐帧并排比较.
+  - 另外已经生成:
+    - `demo_data/my2_timefreeze_10000/0/generated_videos_steps10_compare/frames_contact_sheet.jpg`
+    - `demo_data/my2_timefreeze_10000/0/generated_videos_steps10_compare/generated_video_0_vs_steps40_side_by_side.mp4`
+
+### 视觉观察
+- 10 步版整体镜头路径和“时间静止”约束都保持住了.
+- 与 40 步版相比, 10 步版在远处人物轮廓、屏幕边缘和高光细节上略软.
+- 40 步版的小结构更干净, 但 10 步版已经足够做快速验证和 prompt 方向判断.
+
+### 结论
+- 当前新场景已经同时具备:
+  - 40 步正式样本
+  - 10 步快速对比样本
+  - 10/40 步并排对比视频
+- 后续如果要决定全量 6 条是优先速度还是优先细节, 现在已经有直接证据可看.
+
+## [2026-03-15 15:52:00 UTC] `my3` 新海诚风格展厅场景的 0 号轨迹 20 step 快速版
+
+### 现象
+- 新输入图位于:
+  - `demo_data/my3/generated-image (1).png`
+- 画面内容是蓝白色未来展厅, 带玻璃天窗、强反射地面、概念车展示位和远处科技展项.
+- 用户要求:
+  - 只相机控制
+  - 0 号镜头
+  - 20 step 快速版
+  - 新海诚风格
+
+### 执行命令
+- 实际执行:
+  - `pixi run python inference/single_image_multi_trajectory.py --input_image_path "demo_data/my3/generated-image (1).png" --output_root demo_data/my3_shinkai_quick20 --transformer_path model/VerseCrafter --prompt "in the style of Makoto Shinkai, a frozen-in-time futuristic AI exhibition hall ..." --negative_prompt "human motion, object motion, animated screen content, flickering LEDs, ..." --camera_only --preset_indices 0 --moge_version v2 --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt --auto_center_depth_quantile 0.2 --translation_reference_depth_scale 0.95 --total_movement_distance_factor 1.5 --sample_size "720,1280" --num_inference_steps 20 --gpu_memory_mode model_cpu_offload_and_qfloat8 --ulysses_degree 1 --ring_degree 1 --guidance_scale 5.0 --seed 2025 --fps 16`
+
+### 动态证据
+- Step 1:
+  - 本地 `moge-2-vitl` 权重直接加载成功
+  - 成功输出 `depth_intrinsics.npz`
+- Step 5:
+  - 明确输出 `Loaded 0 mask files`
+  - 明确输出 `No objects detected; generated empty Gaussian projection video`
+- Step 6:
+  - 采样从 `0/20` 推进到 `20/20`
+  - 最终输出:
+    - `demo_data/my3_shinkai_quick20/0/generated_videos/generated_video_0.mp4`
+
+### 输出校验
+- `manifest.json`:
+  - `status = completed`
+  - `selected_preset_indices = [0]`
+  - `camera_only = True`
+  - `trajectory0_status = completed`
+- `ffprobe`:
+  - 编码: `h264`
+  - 分辨率: `1280x720`
+  - 帧率: `16 fps`
+  - 帧数: `81`
+  - 时长: `5.0625s`
+- 额外生成:
+  - `demo_data/my3_shinkai_quick20/0/generated_videos/frames_contact_sheet.jpg`
+
+### 视觉观察
+- 20 step 快速版已经把“蓝白高光展厅 + 天窗光束 + 大面积反射地面”的主观风格保住了.
+- 0 号镜头的横向移动关系清楚, 场景保持 rigid, 没有引入独立前景运动.
+- 作为快速版, 它已经足够拿来判断 prompt 和镜头趋势; 若后面要更干净的高光与结构细节, 再升到 40 step 会更稳.

@@ -298,6 +298,63 @@ torchrun --nproc-per-node=8 inference/versecrafter_inference.py \
 
 ![Generated Video](asset/generated_video_0.gif)
 
+### Single-image 6-trajectory batch workflow (without manual Blender editing)
+
+If you want to generate six fixed camera-motion videos from the same input image, you can now use the new VerseCrafter batch entrypoint directly. This workflow reuses depth, segmentation, and 3D Gaussian fitting once, then generates six deterministic presets: `left`, `right`, `up`, `zoom_out`, `zoom_in`, and `clockwise`.
+
+```bash
+python inference/single_image_multi_trajectory.py \
+  --input_image_path $INPUT_IMAGE \
+  --output_root $OUTPUT_DIR/multi_trajectory_batch \
+  --transformer_path $MODEL_PATH \
+  --object_prompt "person . car ." \
+  --prompt "A sun-drenched street in Valletta, Malta, showcasing towering honey-colored limestone buildings adorned with traditional wrought-iron balconies and arched doorways. On the left-hand sidewalk, a man in a bright orange T-shirt and a woman in a beige summer dress walk side-by-side. Several cars are parked in the distance. The vibrant Mediterranean sunlight casts soft shadows, illuminating the weathered textures of the ancient architecture, which stretches towards distant city fortifications under a clear, pale blue sky." \
+  --negative_prompt "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality" \
+  --auto_center_depth_quantile 0.2 \
+  --translation_reference_depth_scale 0.95 \
+  --total_movement_distance_factor 1.5 \
+  --sample_size "720,1280" \
+  --num_inference_steps 30 \
+  --gpu_memory_mode model_cpu_offload_and_qfloat8 \
+  --ulysses_degree 1 \
+  --ring_degree 1
+```
+
+The batch output layout is:
+
+```text
+$OUTPUT_ROOT/
+  manifest.json
+  shared/
+    estimated_depth/
+    foreground_masks/
+    fitted_3D_gaussian/
+  0/
+  1/
+  2/
+  3/
+  4/
+  5/
+```
+
+Each numeric directory contains:
+- `custom_camera_trajectory.npz`
+- `custom_3D_gaussian_trajectory.json`
+- `rendering_4D_maps/`
+- `generated_videos/generated_video_0.mp4`
+
+If you only want to validate one or a few presets first, you can limit the batch with `--preset_indices`. For example, `--preset_indices 0` runs only the `left` preset while keeping the same shared preprocessing workflow.
+
+If you want **camera motion only** and do **not** want people / cars to become independent moving foreground objects, add:
+
+```bash
+  --camera_only
+```
+
+In this mode, the script skips foreground segmentation and 3D Gaussian fitting, keeps the whole image inside the rigid background point cloud, and writes an empty `custom_3D_gaussian_trajectory.json` with `num_objects=0`.
+
+The root `manifest.json` records preset-name mapping, movement distances, resolved center depth, translation reference depth, stage status, and output video paths.
+
 ## Acknowledgements
 
 Our codes are built upon  [MoGe](https://github.com/microsoft/MoGe), [Grounded-SAM-2](https://github.com/IDEA-Research/Grounded-SAM-2), [VideoX-Fun](https://github.com/aigc-apps/VideoX-Fun),  [Wan2.1](https://github.com/Wan-Video/Wan2.1) and [diffusers](https://github.com/huggingface/diffusers).
