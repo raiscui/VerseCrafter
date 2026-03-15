@@ -63,46 +63,35 @@
 
    cd VerseCrafter
    ```
-2. **Create and activate the Conda environment:**
+2. **Create and activate the Pixi environment:**
 
    ```bash
-   conda create -n versecrafter python=3.11 -y
-   conda activate versecrafter
+   # Install pixi first if needed:
+   # https://pixi.sh/latest/
 
-   # Install PyTorch
-   conda install pytorch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 pytorch-cuda=12.1 -c pytorch -c nvidia -y 
+   # Resolve the managed environment from pixi.toml
+   pixi install
 
-   # Install Python dependencies
-   pip install -r requirements.txt
+   # Install the remaining git / editable / build-from-source dependencies
+   # (this step compiles CUDA extensions and may take a while)
+   pixi run bootstrap
 
-   # Install MoGe
-   pip install git+https://github.com/microsoft/MoGe.git
-
-   # Install Grounded-SAM-2
-   cd third_party/Grounded-SAM-2
-   pip install -e .
-   pip install --no-build-isolation -e grounding_dino
-
-   # Install flash attention
-   pip install flash-attn --no-build-isolation
-
-   # Install pytorch3d
-   cd ../../
-   git clone https://github.com/facebookresearch/pytorch3d.git
-   cd pytorch3d
-   pip install --no-build-isolation .
-   cd ../VerseCrafter
+   # Enter the environment so the remaining README commands can use plain python / hf / torchrun
+   pixi shell
    ```
+
+   Notes:
+   - The provided `pixi.toml` targets the Linux CUDA inference environment used by VerseCrafter.
+   - If you prefer not to open a shell, prefix later commands with `pixi run`, for example `pixi run python api_server.py --port 8188 --num_gpus 8`.
 
 ## Download Checkpoints
 
 1. **Download VerseCrafter and Wan2.1 models:**
 
    ```bash
-   pip install --upgrade huggingface_hub
    mkdir -p model
    hf download --local-dir model/VerseCrafter sxzheng/VerseCrafter
-   hf download --local-dir model/Wan2.1-T2V-14B Wan-AI/Wan2.1-T2V-14B
+   modelscope download --model Wan-AI/Wan2.1-T2V-14B --local_dir model/Wan2.1-T2V-14B
    ```
 2. **Download Grounded-SAM-2 and Grounding DINO checkpoints:**
 
