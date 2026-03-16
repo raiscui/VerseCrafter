@@ -182,3 +182,99 @@
 - 这次推送避免了一个真实风险:
   - 主仓库引用了上游远端不可达的 submodule commit
 - 本地上下文文件变更未被一并提交, 因此远端只包含项目本身需要的修复.
+
+## [2026-03-16 03:12:00 UTC] `demo_data/my3` 双卡 0 号视角测试命令核对
+
+### 来源
+- `README.md`
+- `inference/single_image_multi_trajectory.py`
+- `inference/versecrafter_inference.py`
+- `third_party/VideoX-Fun/README.md`
+- 对 `demo_data/my3/generated-image (1).png` 的本地查看
+
+### 已观察到的事实
+- `demo_data/my3` 当前只有一张输入图:
+  - `demo_data/my3/generated-image (1).png`
+- 图像尺寸是 `1366x768`, 内容是偏静态的未来展厅场景, 更像“相机运动”测试场景.
+- `README.md` 已明确说明 Step 6 的多卡入口是 `torchrun --nproc-per-node=N inference/versecrafter_inference.py`.
+- `single_image_multi_trajectory.py` 在 `nproc_per_node > 1` 时会自动切到 `torchrun`.
+- `single_image_multi_trajectory.py` 支持 `--preset_indices 0`, 可只跑 0 号视角.
+- `single_image_multi_trajectory.py` 普通模式下要求 `gaussian_params.json` 的 `num_objects > 0`, 否则会报错:
+  - `Zero-object scenes are not supported by this workflow version.`
+- 同一脚本支持 `--camera_only`, 该模式会显式写入 `num_objects=0` 占位 JSON, 允许纯相机运动流程继续.
+- `third_party/VideoX-Fun/README.md` 说明:
+  - `ulysses_degree * ring_degree == GPU 数量`
+  - `ring_degree` 通信成本高于 `ulysses_degree`
+  - 对 14B 模型, 优先让 `ulysses_degree` 去吃并行度更合理
+
+### 当前判断
+- 主假设:
+  - 对 `demo_data/my3` 这类展厅静态图, 本次“0 号视角视频测试”最稳妥路径是:
+    - 使用 `single_image_multi_trajectory.py`
+    - 限定 `--preset_indices 0`
+    - 使用 `--camera_only`
+    - 双卡配置设为 `ulysses_degree=2`, `ring_degree=1`, `nproc_per_node=2`
+    - 生成参数使用用户要求的 `--num_inference_steps 10 --gpu_memory_mode model_cpu_offload`
+- 备选解释:
+  - 如果希望把展台中的车体、机械臂等也拆成独立前景对象, 则可以不用 `--camera_only`, 改成更贴图的 `object_prompt`, 但这会增加 Grounded-SAM-2 命中不稳定性.
+- 能推翻主假设的证据:
+  - 若 `camera_only` 模式在 Step 5 或 Step 6 出现契约错误.
+  - 若用户明确要求保留独立物体 3D Gaussian 控制, 而不是纯相机运动.
+
+### 动态验证
+- 已执行 dry-run:
+  - `pixi run python inference/single_image_multi_trajectory.py ... --preset_indices 0 --ulysses_degree 2 --ring_degree 1 --nproc_per_node 2 --num_inference_steps 10 --gpu_memory_mode model_cpu_offload --dry_run`
+- Dry-run 已生成符合预期的最终 Step 6 命令:
+  - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py ... --ulysses_degree 2 --ring_degree 1 --num_inference_steps 10 --gpu_memory_mode model_cpu_offload`
+
+## [2026-03-16 03:10:00 UTC] 用户中断后补充的命令修正
+
+### 现象
+- 上一轮执行在 `moge-v2_infer.py` 的默认预训练模型下载阶段停住.
+- 代码静态阅读已确认 `inference/moge-v2_infer.py` 中 `model_version=v2` 的默认模型是:
+  - `Ruicheng/moge-2-vitl-normal`
+
+### 用户提供的新约束
+- 不要下载 `moge-2-vitl-normal`.
+- 改用本地缓存的 `moge-2-vitl` 权重文件.
+- 参考命令中的其他稳定参数包括:
+  - 更强的 `negative_prompt`
+  - `camera_only`
+  - `auto_center_depth_quantile=0.2`
+  - `translation_reference_depth_scale=0.95`
+  - `total_movement_distance_factor=1.5`
+
+### 当前结论
+- 对当前 `my3` 双 A800 测试, 应在保留用户原始目标的前提下改成:
+  - `--moge_version v2`
+  - `--moge_pretrained <本地 model.pt>`
+  - 仍保持 `--preset_indices 0`
+  - 仍保持双卡 `--ulysses_degree 2 --ring_degree 1 --nproc_per_node 2`
+  - 仍保持用户原始测试约束 `--num_inference_steps 10 --gpu_memory_mode model_cpu_offload`
+
+## [2026-03-16 03:14:00 UTC] 双卡 Step 6 失败定位
+
+### 现象
+- 新命令已经成功完成:
+  - 深度估计
+  - camera_only 共享占位输出
+  - 0 号视角轨迹生成
+  - 4D 控制图渲染
+- 真正失败的位置在 Step 6 双卡生成入口 `torchrun --nproc-per-node=2 inference/versecrafter_inference.py`.
+
+### 动态证据
+- 日志报错:
+  - `RuntimeError: xfuser is not installed.`
+- 进一步验证:
+  - `import xfuser` -> `ModuleNotFoundError`
+  - `import yunchang` -> `ModuleNotFoundError`
+
+### 静态证据
+- `third_party/VideoX-Fun/README.md` 明确写出多卡前置依赖:
+  - `xfuser==0.4.2`
+  - `yunchang==0.6.2`
+
+### 结论
+- 当前失败不是命令参数错误, 也不是 `moge` 权重问题.
+- 当前阻塞点是双卡运行时依赖缺失.
+- 下一步应先为 Pixi 环境安装 `xfuser==0.4.2` 和 `yunchang==0.6.2`, 再从已生成的 `rendering_4D_maps` 继续重跑 Step 6.
