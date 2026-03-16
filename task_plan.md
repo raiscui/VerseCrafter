@@ -347,3 +347,48 @@
 **当前收尾任务完成**
 - 成功命令已沉淀到仓库文档.
 - 后续可直接从 `cmd.md` 复制执行.
+
+## [2026-03-16 03:36:00 UTC] 新任务启动: `demo_data/my3` 双 A800 0 号轨迹 60 步对比生成
+
+### 目标
+- 在不重跑 Step 1-5 的前提下, 基于现有 `my3` 控制图复跑双卡 Step 6.
+- 生成 60 步版本, 与当前 10 步结果做对照.
+- 保持其余关键约束不变:
+  - 双 A800
+  - `ulysses_degree=2`
+  - `ring_degree=1`
+  - `gpu_memory_mode=model_cpu_offload`
+
+### 阶段
+- [ ] 阶段1: 确认可复用产物与新的输出目录
+- [ ] 阶段2: 执行双卡 60 步 Step 6
+- [ ] 阶段3: 验证 60 步视频产物并回写记录
+
+### 做出的决定
+- 决定: 只复跑 Step 6.
+  - 理由: `rendering_4D_maps` 已经存在且已验证有效, 没必要重复做深度估计和渲染.
+- 决定: 新输出目录使用 `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare`.
+  - 理由: 不覆盖当前 10 步结果, 便于后续并排比较.
+
+### 状态
+**目前在阶段1**
+- 已确认可复用的 `rendering_4D_maps` 存在.
+- 下一步直接启动双卡 60 步生成.
+
+## [2026-03-16 04:17:00 UTC] 60 步对比生成完成
+
+### 验证
+- 60 步双卡 Step 6 已成功跑完.
+- 最终输出文件存在:
+  - `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`
+- `ffprobe` 验证:
+  - 分辨率: `1280x720`
+  - 帧率: `16 fps`
+  - 帧数: `81`
+  - 时长: `5.0625 s`
+
+### 状态
+**当前 60 步任务完成**
+- `my3` 当前已具备两版可对比结果:
+  - 10 步: `demo_data/my3_dual_a800_test_v2/0/generated_videos/generated_video_0.mp4`
+  - 60 步: `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`

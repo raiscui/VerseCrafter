@@ -278,3 +278,31 @@
 - 当前失败不是命令参数错误, 也不是 `moge` 权重问题.
 - 当前阻塞点是双卡运行时依赖缺失.
 - 下一步应先为 Pixi 环境安装 `xfuser==0.4.2` 和 `yunchang==0.6.2`, 再从已生成的 `rendering_4D_maps` 继续重跑 Step 6.
+
+## [2026-03-16 04:17:00 UTC] `demo_data/my3` 双卡 60 步 Step 6 复跑结果
+
+### 现象
+- 基于现有 `rendering_4D_maps` 直接重跑双卡 Step 6.
+- 参数保持不变, 仅将 `num_inference_steps` 从 `10` 提升到 `60`.
+
+### 动态证据
+- 命令成功退出 `code 0`.
+- 终端最终输出:
+  - `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`
+- 60 步采样总耗时约 `33m55s`.
+- 进度表现上, TeaCache 在前 5 步后开始明显降低单步耗时, 所以 60 步总时长没有线性膨胀到 10 步的 6 倍.
+
+### 产物验证
+- 60 步视频路径:
+  - `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`
+- `ffprobe` 验证:
+  - `1280x720`
+  - `81` 帧
+  - `16 fps`
+  - `5.0625 s`
+
+### 当前结论
+- `demo_data/my3` 的双 A800 0 号轨迹在 `num_inference_steps=60`、`gpu_memory_mode=model_cpu_offload` 下也已成功跑通.
+- 当前目录里已经同时有可对比的两版结果:
+  - 10 步: `generated_videos/generated_video_0.mp4`
+  - 60 步: `generated_videos_steps60_compare/generated_video_0.mp4`

@@ -77,3 +77,20 @@
 ### 总结感悟
 - 命令文档真正有用的前提, 不是“命令看起来完整”, 而是把那些只有跑过一次才知道的隐含约束也写进去.
 - 对多卡这类流程, 最容易浪费时间的往往不是主命令本身, 而是前置依赖和默认模型选择.
+
+## [2026-03-16 04:17:00 UTC] 任务名称: `demo_data/my3` 双 A800 0 号轨迹 60 步对比生成
+
+### 任务内容
+- 在不重跑 `my3` 前置控制图的前提下, 复用 `rendering_4D_maps` 直接生成 60 步版本.
+- 保持双卡、`model_cpu_offload`、0 号轨迹不变, 仅提升 `num_inference_steps` 到 `60`.
+
+### 完成过程
+- 先确认 `demo_data/my3_dual_a800_test_v2/0/rendering_4D_maps` 完整可复用, 并确认 `generated_videos_steps60_compare/` 为空目录.
+- 再确认 `xfuser` 与 `yunchang` 仍能正常导入, 避免重进多卡初始化后才失败.
+- 之后直接执行双卡 `torchrun` 版 `inference/versecrafter_inference.py`, 输出到:
+  - `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare`
+- 最终成功得到 60 步视频产物, 并用 `ffprobe` 验证其元信息.
+
+### 总结感悟
+- 对这种对比测试, 最优路径就是复用已验证的 `rendering_4D_maps` 直接重跑 Step 6.
+- TeaCache 对长步数任务的加速是肉眼可见的, 所以 60 步虽然更慢, 但不会完全按 10 步的 6 倍增长.
