@@ -153,3 +153,42 @@
 ### 总结感悟
 - `torch.cuda.is_available() == True` 只说明“至少能初始化某张 CUDA 设备”, 并不说明“足够支撑当前 `torchrun` 的本地 worker 数”.
 - 对多卡脚本, 比起事后在 FSDP 深层崩掉, 更好的做法是在入口显式比较 `nproc_per_node` 和 `torch.cuda.device_count()`.
+
+## [2026-03-21 16:56:30 UTC] 任务名称: 解释 `my4` 的 `xfuser is not installed` 报错来源
+
+### 任务内容
+- 解释 `demo_data/my4` 在 Step 6 里为什么出现 `Preset left failed` 与 `RuntimeError: xfuser is not installed.`.
+- 区分外层批处理摘要日志与内层真实触发点.
+- 补充当前环境下这条报错是否仍然等价于“没装包”的核对结果.
+
+### 完成过程
+- 先回读 `task_plan.md`、`WORKLOG.md`、`EPIPHANY_LOG.md`、`ERRORFIX.md`, 确认仓库历史上 `2026-03-16` 已经出现过同类多卡依赖问题.
+- 再核对 `single_image_multi_trajectory.py`、`versecrafter_inference.py`、`videox_fun/dist/fuser.py` 和 `third_party/VideoX-Fun/README.md`, 建立从批处理入口到 `set_multi_gpus_devices()` 的完整调用链.
+- 动态验证当前环境时发现:
+  - `find_spec('xfuser') == True`
+  - 但 `videox_fun.dist.fuser` 导入后 `get_sp_group is None`
+  - 直接 `import xfuser` 会报 `torch.cuda.DeferredCudaCallError`
+- 最终确认这句 `RuntimeError("xfuser is not installed.")` 在当前代码里属于宽泛包装提示, 不一定严格等于“包缺失”.
+
+### 总结感悟
+- 这次最重要的收获不是“知道要看 `xfuser`”, 而是识别出 `fuser.py` 会把导入期真实异常掩盖掉, 从而误导排障方向.
+- 对这类分布式依赖问题, 不能只看最终抛出的字符串, 还要回看导入期和初始化期是否已经提前失败.
+
+## [2026-03-21 17:16:00 UTC] 任务名称: 快进 `add-clockwise-radius-variants` 到 apply-ready
+
+### 任务内容
+- 使用 `openspec-ff-change` 流程, 为现有 change `add-clockwise-radius-variants` 一次性创建实施前所需的全部 artifacts.
+- 围绕用户需求“新增 `clockwise_0.65` 与 `clockwise_1.5` 两个顺时针半径变体镜头动作”补齐 proposal、design、specs、tasks.
+
+### 完成过程
+- 先读取 `openspec status --json` 与四类 artifact 的 JSON instructions, 确认 schema 为 `spec-driven`, 且 `applyRequires = ["tasks"]`.
+- 再回读现有轨迹代码、测试与 README, 确认这次变化不仅涉及 orbit 数学, 也涉及 preset 注册表、canonical 顺序、`--preset_indices`、dry-run 输出与文档.
+- 创建 `proposal.md`, 将 capability 定义为新的 `clockwise-radius-variants`.
+- 创建 `design.md`, 明确采用“在 preset 元数据中表达半径倍率”的方案, 并保留现有 `clockwise` 索引和语义稳定.
+- 创建 `specs/clockwise-radius-variants/spec.md`, 将“新增 2 个 preset”“只缩放 orbit 半径”“subset 选择与 canonical 顺序保持稳定”写成可验证 REQUIREMENTS.
+- 创建 `tasks.md`, 将后续实施拆成 preset/catalog、用户可见面、验证三组任务.
+- 最后回跑 `openspec status`, 确认 4/4 artifacts complete, change 已达到 apply-ready.
+
+### 总结感悟
+- 这类需求如果直接跳到代码实现, 很容易漏掉 README、subset 选择和稳定索引这些“不是公式本身, 但用户会直接碰到”的边界.
+- 先把 capability、设计决策和验证口径写死, 后面真正改代码时会更稳, 也更不容易把原有 `clockwise` 行为改坏.

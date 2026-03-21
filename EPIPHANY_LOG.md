@@ -155,3 +155,33 @@
 - 后续若再给其他多卡入口做预检, 优先复用这条规则:
   - 先比较本地 worker 数和 `torch.cuda.device_count()`
   - 再进入真正的分布式初始化与 FSDP / DDP 封装
+
+## [2026-03-21 16:55:00 UTC] 主题: `fuser.py` 会把 `xfuser` 的导入期异常统一伪装成 "xfuser is not installed"
+
+### 发现来源
+- 在解释 `demo_data/my4` 的 `RuntimeError: xfuser is not installed.` 时, 追读了 `third_party/VideoX-Fun/videox_fun/dist/fuser.py` 与当前 Pixi 环境里的 `xfuser` 实际导入行为.
+
+### 核心问题
+- `fuser.py` 顶部使用 `except Exception` 包住 `import xfuser`.
+- 一旦导入期发生任意异常, 例如 CUDA 初始化失败, 代码就只会留下 `get_sp_group = None`.
+- 后续 `set_multi_gpus_devices()` 再统一抛:
+  - `RuntimeError("xfuser is not installed.")`
+- 这会把“包没装”和“包在, 但导入时炸了”混成同一句表象报错.
+
+### 为什么重要
+- 这类掩盖会直接误导排障方向.
+- 人会优先去补装依赖, 但真正的问题可能是:
+  - CUDA 设备初始化异常
+  - `xfuser` 自身导入期检查过于激进
+  - 环境变量或 GPU 拓扑异常
+
+### 当前结论
+- 当前环境里:
+  - `find_spec('xfuser') == True`
+  - 但直接 `import xfuser` 会报 `torch.cuda.DeferredCudaCallError`
+- 因此 `RuntimeError: xfuser is not installed.` 在本项目里不是严格可信的底层事实, 只能视为“xfuser 能力未成功初始化”的包装提示.
+
+### 后续讨论入口
+- 如果后续要改善排障体验, 优先考虑:
+  - 在 `fuser.py` 保留并透出原始导入异常摘要
+  - 至少区分 `ModuleNotFoundError` 和其他导入失败

@@ -656,3 +656,168 @@
 ### 状态
 **任务已完成**
 - 代码修改、测试验证、日志回写均已完成.
+
+## [2026-03-21 16:45:30 UTC] 新任务启动: 解释 `my4` 为何报 `RuntimeError: xfuser is not installed`
+
+### 目标
+- 解释 `demo_data/my4` 当前命令里 `Preset left failed` 与 `RuntimeError: xfuser is not installed.` 的真实触发关系.
+- 区分这是参数触发的功能依赖, 还是用户命令本身写错.
+- 给出最直接可执行的后续处理路径.
+
+### 阶段
+- [ ] 阶段1: 回读历史上下文与已有排障记录
+- [ ] 阶段2: 核对 `single_image_multi_trajectory.py` 与 `versecrafter_inference.py` 的调用链
+- [ ] 阶段3: 核对 `xfuser` 在 `VideoX-Fun` 中的触发条件与依赖说明
+- [ ] 阶段4: 汇总现象、假设、验证结论并答复用户
+
+### 关键问题
+1. 这次日志里的 `Preset left failed` 是真正根因, 还是只是批处理包装层对内部异常的摘要.
+2. `xfuser` 是否只在多卡路径下需要, 以及当前参数是否明确进入了这条路径.
+
+### 备选方向
+- 方案A: 最完整解释.
+  - 追完整调用链.
+  - 结合 README 与代码说明为什么会报这个错误.
+  - 给出继续跑通所需依赖或参数改法.
+- 方案B: 快速解释.
+  - 只说明 `xfuser` 没装, 多卡所以报错.
+  - 不展开调用链.
+
+### 做出的决定
+- 决定: 先按方案A核对.
+  - 理由: 用户问的是“为什么报告这个错误”, 需要把外层 `Preset left failed` 和内层真实异常拆开讲清楚.
+
+### 遇到的错误
+- 暂无.
+
+### 状态
+**目前在阶段2**
+- 已完成六文件上下文回读.
+- 正在核对多轨迹入口、Step 6 推理入口与 `xfuser` 触发条件.
+
+## [2026-03-21 16:55:00 UTC] 用户要求快进 `add-clockwise-radius-variants` 到 apply-ready
+
+### 目标
+- 使用 `openspec-ff-change` 流程, 直接为现有 change `add-clockwise-radius-variants` 生成全部实施前必需 artifacts.
+- 目标状态是至少达到 schema 的 `apply.requires` 要求, 让后续可以直接进入实现.
+- 生成顺序遵循 OpenSpec 的依赖链, 不跳过 proposal / design / specs / tasks.
+
+### 阶段
+- [ ] 阶段1: 读取 JSON 状态与 artifact 指令
+- [ ] 阶段2: 调研现有代码与历史 change, 确定 capability 边界
+- [ ] 阶段3: 创建 proposal
+- [ ] 阶段4: 创建 design
+- [ ] 阶段5: 创建 specs
+- [ ] 阶段6: 创建 tasks 并达到 apply-ready
+- [ ] 阶段7: 校验状态并回写日志
+
+### 关键问题
+1. 这次 capability 应该定义成“新增两个具体 preset”, 还是“支持可缩放的 clockwise 半径变体”.
+2. 仓库当前没有 `openspec/specs/` 既有规格, 是否应把这次作为一个全新的 capability, 而不是修改已有 capability.
+3. 除了轨迹数学本身, 用户可见面还涉及 CLI 展示、选择列表、文档和测试, 这些是否应纳入 tasks.
+
+### 做出的决定
+- 决定: 继续使用已存在的 change `add-clockwise-radius-variants`, 不新建同名 change.
+  - 理由: `openspec-ff-change` guardrail 明确要求同名 change 已存在时应继续该 change.
+- 决定: 先读取 OpenSpec JSON 指令, 再写 artifact.
+  - 理由: 要严格按 schema 的模板、规则和输出路径来生成.
+
+### 状态
+**目前在阶段1**
+- 正在读取 change 的 JSON 状态、apply 依赖与各 artifact JSON 指令.
+
+## [2026-03-21 16:54:00 UTC] 报错归因核对完成
+
+### 验证
+- 已核对调用链:
+  - `single_image_multi_trajectory.py` 会在 `nproc_per_node > 1` 时构造 `torchrun --nproc-per-node=... inference/versecrafter_inference.py`
+  - `versecrafter_inference.py` 一进入即调用 `set_multi_gpus_devices(ulysses_degree, ring_degree)`
+- 已核对触发条件:
+  - 当前命令传入 `--ulysses_degree 2 --ring_degree 1 --nproc_per_node 2`
+  - 这会强制进入多卡路径
+- 已做动态验证:
+  - `find_spec('xfuser') == True`
+  - 但 `videox_fun.dist.fuser` 导入后 `get_sp_group is None`
+  - 直接 `import xfuser` 目前会因 CUDA 初始化报 `DeferredCudaCallError`
+
+### 结论
+- `Preset left failed` 只是轨迹级包装日志, 不是根因.
+- `RuntimeError: xfuser is not installed.` 的直接含义是:
+  - 多卡依赖初始化失败.
+- 这句报错在当前代码里是宽泛提示, 不一定严格等于“包缺失”.
+  - 也可能是 `xfuser` 导入阶段被别的异常打断后, 被 `fuser.py` 统一掩盖.
+
+### 阶段更新
+- [x] 阶段1: 回读历史上下文与已有排障记录
+- [x] 阶段2: 核对 `single_image_multi_trajectory.py` 与 `versecrafter_inference.py` 的调用链
+- [x] 阶段3: 核对 `xfuser` 在 `VideoX-Fun` 中的触发条件与依赖说明
+- [x] 阶段4: 汇总现象、假设、验证结论并答复用户
+
+### 状态
+**任务已完成**
+- 已拿到静态代码证据与当前环境动态证据.
+- 下一步只需向用户说明“外层摘要报错”和“内层真实触发条件”的关系, 并给出后续建议.
+
+## [2026-03-21 17:05:00 UTC] 阶段1-2完成, 开始创建 proposal
+
+### 已完成
+- [x] 阶段1: 读取 JSON 状态与 artifact 指令
+- [x] 阶段2: 调研现有代码与历史 change, 确定 capability 边界
+- [ ] 阶段3: 创建 proposal
+- [ ] 阶段4: 创建 design
+- [ ] 阶段5: 创建 specs
+- [ ] 阶段6: 创建 tasks 并达到 apply-ready
+- [ ] 阶段7: 校验状态并回写日志
+
+### 研究结论
+- 当前仓库没有既有 `openspec/specs/` 能复用, 所以这次适合作为新的 capability.
+- capability 名称确定为 `clockwise-radius-variants`.
+- 需求核心是“新增两个命名 preset, 仅缩放 clockwise 半径, 不改变现有 clockwise 的语义与索引”.
+- 这次不仅影响轨迹生成, 还影响 preset 列表、`--preset_indices`、dry-run 输出、README 与测试.
+
+### 状态
+**目前在阶段3**
+- 正在创建 `proposal.md`.
+
+## [2026-03-21 17:12:00 UTC] `proposal` 完成, 开始创建 `design` 与 `specs`
+
+### 已完成
+- [x] 阶段1: 读取 JSON 状态与 artifact 指令
+- [x] 阶段2: 调研现有代码与历史 change, 确定 capability 边界
+- [x] 阶段3: 创建 proposal
+- [ ] 阶段4: 创建 design
+- [ ] 阶段5: 创建 specs
+- [ ] 阶段6: 创建 tasks 并达到 apply-ready
+- [ ] 阶段7: 校验状态并回写日志
+
+### 状态
+**目前在阶段4-5**
+- `proposal.md` 已创建.
+- 正在创建 `design.md` 与 `specs/clockwise-radius-variants/spec.md`.
+
+## [2026-03-21 17:16:00 UTC] `add-clockwise-radius-variants` 已达到 apply-ready
+
+### 已完成
+- [x] 阶段1: 读取 JSON 状态与 artifact 指令
+- [x] 阶段2: 调研现有代码与历史 change, 确定 capability 边界
+- [x] 阶段3: 创建 proposal
+- [x] 阶段4: 创建 design
+- [x] 阶段5: 创建 specs
+- [x] 阶段6: 创建 tasks 并达到 apply-ready
+- [x] 阶段7: 校验状态并回写日志
+
+### 验证
+- `openspec status --change "add-clockwise-radius-variants"` 返回:
+  - `Progress: 4/4 artifacts complete`
+  - `All artifacts complete!`
+- `applyRequires = ["tasks"]` 已满足.
+- 当前已创建 artifact:
+  - `proposal.md`
+  - `design.md`
+  - `specs/clockwise-radius-variants/spec.md`
+  - `tasks.md`
+
+### 状态
+**任务已完成**
+- 该 change 已可直接进入实现阶段.
+- 下一步应基于 `tasks.md` 开始修改代码和测试.

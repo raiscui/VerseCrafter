@@ -386,3 +386,128 @@
 - 为什么暂不选备选方向:
   - 这会偷偷改变用户请求的并行拓扑和显存 / 速度特征.
   - 对多卡工作流, 静默降级比显式失败更容易制造后续误解.
+
+## [2026-03-21 16:52:30 UTC] `my4` 的 `xfuser is not installed` 报错核对
+
+### 现象
+- 用户在 `2026-03-21 16:40:34 UTC` 的日志里看到:
+  - `Preset left failed`
+  - `RuntimeError: xfuser is not installed.`
+- 乍看像是当前环境单纯缺少 `xfuser` 包.
+
+### 静态证据
+- `inference/single_image_multi_trajectory.py` 中:
+  - `args.nproc_per_node` 默认等于 `ulysses_degree * ring_degree`
+  - `build_generation_command()` 在 `nproc_per_node > 1` 时会走:
+    - `torchrun --nproc-per-node=... inference/versecrafter_inference.py`
+- `inference/versecrafter_inference.py` 中:
+  - 一进入主流程就执行 `set_multi_gpus_devices(ulysses_degree, ring_degree)`
+- `third_party/VideoX-Fun/videox_fun/dist/fuser.py` 中:
+  - 顶部先 `import xfuser`
+  - 但用了 `except Exception` 把任意导入异常都吞掉
+  - 之后只要 `get_sp_group is None`, 就统一抛:
+    - `RuntimeError("xfuser is not installed.")`
+- `third_party/VideoX-Fun/README.md` 也明确写了:
+  - 多卡推理需要安装 `xfuser==0.4.2` 和 `yunchang==0.6.2`
+
+### 动态证据
+- 当前环境里 `importlib.util.find_spec('xfuser') is not None`:
+  - 结果为 `True`
+- 但把 `third_party/VideoX-Fun` 加入 `sys.path` 后导入 `videox_fun.dist.fuser`:
+  - `get_sp_group is None`
+  - `init_distributed_environment is None`
+- 进一步直接 `import xfuser` 时, 当前环境实际报错不是 `ModuleNotFoundError`, 而是:
+  - `torch.cuda.DeferredCudaCallError`
+- `xfuser/envs.py` 第 70~71 行会在导入阶段直接执行:
+  - `device = torch.device("cuda" if torch.cuda.is_available() else "cpu")`
+  - `gpu_name = torch.cuda.get_device_name(device)`
+- 这说明:
+  - 只要 `xfuser` 导入阶段因为 CUDA 初始化等原因抛异常, `fuser.py` 也会把它伪装成“xfuser 没安装”.
+
+### 当前结论
+- 已验证结论1:
+  - `Preset left failed` 不是根因.
+  - 它只是 `single_image_multi_trajectory.py` 对单个轨迹失败的包装日志.
+- 已验证结论2:
+  - 你这次命令明确进入了多卡 Step 6 路径.
+  - 原因是 `--ulysses_degree 2 --ring_degree 1 --nproc_per_node 2`.
+- 已验证结论3:
+  - `RuntimeError: xfuser is not installed.` 的直接触发点, 是 `set_multi_gpus_devices()` 发现 `xfuser` 分布式能力没有初始化成功.
+- 已验证结论4:
+  - 这句报错并不严格等于“包没装”.
+  - 它也可能表示“包在, 但导入阶段已经因为别的异常失败了”.
+
+### 备选解释与推翻条件
+- 主解释:
+  - 当次失败是多卡路径触发后, `xfuser` 能力不可用.
+  - 这可能是未安装, 也可能是导入期 CUDA 异常被掩盖.
+- 备选解释:
+  - 用户只是参数写错.
+- 目前备选解释不成立的原因:
+  - 调用链和日志都能对应到多卡分支的固定代码路径.
+  - 不是参数拼写错误导致的未知行为.
+
+## [2026-03-21 16:58:00 UTC] OpenSpec fast-forward 调研: `clockwise` 半径变体
+
+### 现象
+- 当前 `inference/single_image_multi_trajectory_lib.py` 中 `TRAJECTORY_PRESETS` 只有 6 个 preset:
+  - `left`
+  - `right`
+  - `up`
+  - `zoom_out`
+  - `zoom_in`
+  - `clockwise`
+- `clockwise` 轨迹的真正位移生成逻辑在 `_generate_clockwise_offsets_cv(...)`.
+- 当前圆轨迹半径由 `radius_x_factor` 和 `radius_y_factor` 共同控制, 默认值分别是 `0.15` 与 `0.10`.
+- 当前 `generate_blender_camera_trajectory(...)` 只把 `trajectory_name == "clockwise"` 作为 orbit 分支入口.
+- README 目前明确写的是 “six deterministic presets”, 与新增两个 preset 后的用户可见行为不一致.
+- 现有测试已锁定 `clockwise` 的 Blender x-z 平面 orbit 行为, 但还没有覆盖“半径变体相对基准半径的比例关系”.
+
+### 初步结论
+- 这次变更不是单纯多加两个字符串.
+- 它至少会影响:
+  - preset 注册表
+  - 轨迹生成分发逻辑
+  - CLI / smoke test 中的 preset 数量预期
+  - README 中的用户文案
+  - 新的比例关系单测
+- 由于 `openspec/specs/` 目前为空, 这次 capability 更适合作为一个新的 capability 来建 spec, 而不是修改已有 capability.
+
+### 候选 capability 命名
+- `clockwise-radius-variants`
+  - 更贴近本次具体需求
+- `multi-trajectory-camera-presets`
+  - 范围更宽, 但对本次 change 来说略大
+
+### 当前倾向
+- proposal 的 New Capability 先用 `clockwise-radius-variants`.
+- spec 聚焦“系统必须提供三个 clockwise 半径档位中的两个新增档位, 且轨迹语义保持一致, 仅半径按倍率变化”.
+
+### 补充动态验证
+- 最小复现实验:
+  - 仅导入 `videox_fun.dist.fuser` 并调用 `set_multi_gpus_devices(2, 1)`
+- 输出:
+  - `RuntimeError: xfuser is not installed.`
+- 这证明:
+  - 即使不加载 VerseCrafter 权重、不进入采样流程, 只要命中多卡初始化层, 当前环境就会先在这里失败.
+
+## [2026-03-21 17:08:00 UTC] OpenSpec fast-forward 调研补充: 选择与展示层
+
+### 新证据
+- `select_preset_run_specs(...)` 会把用户传入的 `preset_indices` 规范化为 canonical index 顺序, 并校验是否重复、是否超出可选范围.
+- dry-run 输出会打印:
+  - `selected_preset_indices`
+  - `planned trajectories:`
+  - 每个 preset 的 `[index] name`
+- 这意味着新增 preset 不仅要能生成, 还必须:
+  - 进入 canonical preset 列表
+  - 被 subset 选择逻辑接受
+  - 在 dry-run / stdout 里正确展示名称与索引
+
+### 设计含义
+- specs 里应该明确“现有索引不变, 新增索引追加”.
+- specs 里应该明确“subset 选择接受新索引并按 canonical 顺序输出”.
+- tasks 里需要覆盖:
+  - lib 单测中的 preset 名单与比例关系
+  - smoke test 中的 dry-run / subset 输出
+  - README 从 six 改到 eight
