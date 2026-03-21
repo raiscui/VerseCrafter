@@ -126,3 +126,32 @@
   - 创建 MIG instance
   - 还是直接关闭 MIG
 - 然后再重新验证 `torch.cuda.is_available()` 与 `torch.cuda.get_device_name(0)`.
+
+## [2026-03-21 16:22:30 UTC] 主题: 多卡工作流里 `torch.cuda.is_available()` 为真, 仍可能因为本地 worker 数超过 `device_count()` 而失败
+
+### 发现来源
+- 在 `demo_data/my4` 的 Step 6 多进程推理排查中, 看到:
+  - `torch.cuda.is_available() == True`
+  - 但 `torch.cuda.device_count() == 1`
+  - 同时命令请求 `torchrun --nproc-per-node=2`
+
+### 核心问题
+- 人很容易把 “CUDA 可用” 误解成 “多卡配置也可用”.
+- 实际上, 多卡是否能跑通, 还取决于当前进程真实可见的本地 GPU 数是否足够承载每个 `LOCAL_RANK`.
+
+### 为什么重要
+- 如果只做 `cuda.is_available()` 预检, 仍然会把错误延后到 FSDP / DDP / 张量分配深层, 最终得到很难读的 `invalid device ordinal`.
+- 对使用 `torchrun` 的工作流来说, 这是一类非常值得统一前置拦截的错误.
+
+### 当前结论
+- 多卡预检至少要同时检查:
+  - `torch.cuda.is_available()`
+  - `torch.cuda.device_count()`
+  - `nproc_per_node` / `LOCAL_WORLD_SIZE`
+  - `LOCAL_RANK < device_count`
+- 仅检查 “有没有 CUDA” 不够.
+
+### 后续讨论入口
+- 后续若再给其他多卡入口做预检, 优先复用这条规则:
+  - 先比较本地 worker 数和 `torch.cuda.device_count()`
+  - 再进入真正的分布式初始化与 FSDP / DDP 封装

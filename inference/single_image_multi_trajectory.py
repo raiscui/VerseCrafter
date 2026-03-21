@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -221,6 +222,7 @@ def probe_torch_cuda_runtime() -> dict[str, Any]:
 
     payload["torch_version"] = getattr(torch, "__version__", "unknown")
     payload["compiled_cuda"] = getattr(torch.version, "cuda", None)
+    payload["cuda_visible_devices"] = os.environ.get("CUDA_VISIBLE_DEVICES")
 
     try:
         payload["cuda_available"] = bool(torch.cuda.is_available())
@@ -349,6 +351,35 @@ def explain_why_cuda_is_needed(
     return None
 
 
+def explain_why_multi_gpu_generation_is_needed(
+    args: argparse.Namespace,
+    *,
+    output_root: Path,
+    active_preset_specs: list[dict[str, Any]],
+) -> str | None:
+    """判断这次运行是否真的会进入多进程 Step 6.
+
+    这里不关心 Step 1~5.
+    我们只回答一件事:
+    当前这次执行里, 是否会真的启动 `torchrun --nproc-per-node > 1`
+    去跑最终视频生成.
+    """
+
+    if args.nproc_per_node <= 1:
+        return None
+
+    for preset in active_preset_specs:
+        preset_dir = output_root / str(preset["index"])
+        generated_videos_dir = preset_dir / "generated_videos"
+        if find_generated_video(generated_videos_dir) is None:
+            return (
+                f"preset {preset['index']} ({preset['name']}) 缺少最终生成视频, "
+                f"本次会以 torchrun --nproc-per-node={args.nproc_per_node} 执行 Step 6"
+            )
+
+    return None
+
+
 def build_cuda_preflight_error_message(
     *,
     requested_device: str,
@@ -364,6 +395,7 @@ def build_cuda_preflight_error_message(
         f"- 预处理参数 --device: {requested_device}",
         f"- torch 版本: {probe_payload.get('torch_version', 'unknown')}",
         f"- torch 编译 CUDA: {probe_payload.get('compiled_cuda', 'unknown')}",
+        f"- CUDA_VISIBLE_DEVICES: {probe_payload.get('cuda_visible_devices', 'unset')}",
         f"- torch.cuda.is_available(): {probe_payload.get('cuda_available', probe_payload.get('cuda_available_error', 'unknown'))}",
         f"- torch.cuda.device_count(): {probe_payload.get('device_count', probe_payload.get('device_count_error', 'unknown'))}",
         f"- torch.cuda.get_device_name(0): {probe_payload.get('device_name_0', probe_payload.get('device_name_0_error', 'unknown'))}",
@@ -401,6 +433,83 @@ def ensure_cuda_runtime_ready_or_raise(
             required_reason=required_reason,
             probe_payload=probe_payload,
             mig_hint=detect_mig_no_instance_hint(),
+        )
+    )
+
+
+def build_multi_gpu_preflight_error_message(
+    *,
+    required_reason: str,
+    nproc_per_node: int,
+    ulysses_degree: int,
+    ring_degree: int,
+    probe_payload: dict[str, Any],
+) -> str:
+    """拼出多卡 worker 拓扑不匹配时的清晰报错."""
+
+    lines = [
+        "多卡预检失败: 当前 Step 6 计划启动多进程 CUDA 推理, 但当前 Python / Torch 进程可见的本地 CUDA 设备数量不足.",
+        f"- 触发原因: {required_reason}",
+        f"- 请求的 torchrun --nproc-per-node: {nproc_per_node}",
+        f"- 请求的 ulysses_degree * ring_degree: {ulysses_degree} * {ring_degree} = {ulysses_degree * ring_degree}",
+        f"- CUDA_VISIBLE_DEVICES: {probe_payload.get('cuda_visible_devices', 'unset')}",
+        f"- torch 版本: {probe_payload.get('torch_version', 'unknown')}",
+        f"- torch 编译 CUDA: {probe_payload.get('compiled_cuda', 'unknown')}",
+        f"- torch.cuda.is_available(): {probe_payload.get('cuda_available', probe_payload.get('cuda_available_error', 'unknown'))}",
+        f"- torch.cuda.device_count(): {probe_payload.get('device_count', probe_payload.get('device_count_error', 'unknown'))}",
+        f"- torch.cuda.get_device_name(0): {probe_payload.get('device_name_0', probe_payload.get('device_name_0_error', 'unknown'))}",
+    ]
+
+    visible_device_count = probe_payload.get("device_count")
+    if isinstance(visible_device_count, int):
+        lines.append(
+            f"- 结论: 当前仅有 {visible_device_count} 张可见 CUDA 设备, "
+            f"但请求了 {nproc_per_node} 个本地 worker. "
+            f"当 local_rank >= {visible_device_count} 时, 对应进程会尝试访问不存在的 cuda:{visible_device_count} 及以上设备."
+        )
+    else:
+        lines.append("- 结论: 当前无法可靠探测可见 CUDA 设备数量, 因而不能安全启动多进程 Step 6.")
+
+    lines.extend(
+        [
+            "- 说明: 这不是 VerseCrafter checkpoint 本身损坏, 而是本地 worker 数超过了当前 Torch 实际可见的 GPU 数.",
+            "- 建议1: 如果本机当前只有 1 张可见 GPU, 请把 --nproc_per_node、--ulysses_degree、--ring_degree 都改成 1.",
+            "- 建议2: 如果你原本预期有多张 GPU, 先检查 CUDA_VISIBLE_DEVICES、容器 GPU 挂载、MIG 配置或调度器资源分配, 让 Torch 真正看到足够的本地 GPU 后再重试.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def ensure_requested_worker_topology_or_raise(
+    *,
+    required_reason: str,
+    nproc_per_node: int,
+    ulysses_degree: int,
+    ring_degree: int,
+) -> None:
+    """在启动 Step 6 多进程前验证本地 worker 数是否可落到真实 GPU 上.
+
+    这里专门拦截用户这次踩到的场景:
+    `torch.cuda.is_available()` 为 True,
+    但 `torch.cuda.device_count()` 仍小于 `--nproc-per-node`.
+    这种情况下继续进入 FSDP, 最终只会在更深层报 `invalid device ordinal`.
+    """
+
+    if nproc_per_node <= 1:
+        return
+
+    probe_payload = probe_torch_cuda_runtime()
+    visible_device_count = probe_payload.get("device_count")
+    if isinstance(visible_device_count, int) and visible_device_count >= nproc_per_node:
+        return
+
+    raise RuntimeError(
+        build_multi_gpu_preflight_error_message(
+            required_reason=required_reason,
+            nproc_per_node=nproc_per_node,
+            ulysses_degree=ulysses_degree,
+            ring_degree=ring_degree,
+            probe_payload=probe_payload,
         )
     )
 
@@ -1020,6 +1129,18 @@ def main() -> None:
             ensure_cuda_runtime_ready_or_raise(
                 requested_device=args.device,
                 required_reason=cuda_required_reason,
+            )
+        multi_gpu_required_reason = explain_why_multi_gpu_generation_is_needed(
+            args,
+            output_root=output_root,
+            active_preset_specs=active_preset_specs,
+        )
+        if multi_gpu_required_reason is not None:
+            ensure_requested_worker_topology_or_raise(
+                required_reason=multi_gpu_required_reason,
+                nproc_per_node=args.nproc_per_node,
+                ulysses_degree=args.ulysses_degree,
+                ring_degree=args.ring_degree,
             )
 
         # ------------------------------------------------------------------

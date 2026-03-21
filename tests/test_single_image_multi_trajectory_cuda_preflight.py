@@ -109,3 +109,79 @@ def test_ensure_cuda_runtime_ready_or_raise_surfaces_mig_hint(monkeypatch: pytes
     assert "CUDA 预检失败" in message
     assert "MIG 已开启" in message
     assert "--moge_pretrained" in message
+
+
+def test_explain_why_multi_gpu_generation_is_needed_reports_missing_video(tmp_path: Path) -> None:
+    module = _load_batch_module()
+    args = SimpleNamespace(
+        nproc_per_node=2,
+    )
+
+    reason = module.explain_why_multi_gpu_generation_is_needed(
+        args,
+        output_root=tmp_path,
+        active_preset_specs=[{"index": 5, "name": "clockwise"}],
+    )
+
+    assert reason is not None
+    assert "torchrun --nproc-per-node=2" in reason
+    assert "clockwise" in reason
+
+
+def test_ensure_requested_worker_topology_or_raise_rejects_insufficient_visible_gpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_batch_module()
+
+    monkeypatch.setattr(
+        module,
+        "probe_torch_cuda_runtime",
+        lambda: {
+            "torch_version": "2.3.1",
+            "compiled_cuda": "12.1",
+            "cuda_visible_devices": None,
+            "cuda_available": True,
+            "device_count": 1,
+            "device_name_0": "NVIDIA A800-SXM4-80GB",
+        },
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        module.ensure_requested_worker_topology_or_raise(
+            required_reason="Step 6 将以 torchrun --nproc-per-node=2 启动",
+            nproc_per_node=2,
+            ulysses_degree=2,
+            ring_degree=1,
+        )
+
+    message = str(exc_info.value)
+    assert "多卡预检失败" in message
+    assert "torch.cuda.device_count(): 1" in message
+    assert "--nproc-per-node: 2" in message
+    assert "都改成 1" in message
+
+
+def test_ensure_requested_worker_topology_or_raise_allows_sufficient_visible_gpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_batch_module()
+
+    monkeypatch.setattr(
+        module,
+        "probe_torch_cuda_runtime",
+        lambda: {
+            "torch_version": "2.3.1",
+            "compiled_cuda": "12.1",
+            "cuda_visible_devices": "0,1",
+            "cuda_available": True,
+            "device_count": 2,
+            "device_name_0": "NVIDIA A800-SXM4-80GB",
+        },
+    )
+
+    module.ensure_requested_worker_topology_or_raise(
+        required_reason="Step 6 将以 torchrun --nproc-per-node=2 启动",
+        nproc_per_node=2,
+        ulysses_degree=2,
+        ring_degree=1,
+    )

@@ -342,3 +342,47 @@
 - 但要推翻当前主假设, 至少要出现这样的证据之一:
   - 创建 MIG instance 或关闭 MIG 后, PyTorch 仍旧 `No CUDA GPUs are available`
   - 或在另一个已知正常的 CUDA 程序里也表现为完全不同的底层错误.
+
+## [2026-03-21 16:16:30 UTC] `my4` Step 6 `invalid device ordinal` 的证据链
+
+### 现象
+- 用户日志中, `torchrun --nproc-per-node=2` 进入 `inference/versecrafter_inference.py` 后:
+  - rank0 打印 `device=cuda:0`
+  - rank1 打印 `device=cuda:1`
+- rank1 在 `third_party/VideoX-Fun/videox_fun/dist/fsdp.py` 的 `FSDP(..., device_id=device)` 初始化阶段失败:
+  - `RuntimeError: CUDA error: invalid device ordinal`
+
+### 静态证据
+- `third_party/VideoX-Fun/videox_fun/dist/fuser.py:set_multi_gpus_devices`
+  - 当 `ulysses_degree > 1 or ring_degree > 1` 时, 会:
+    - `dist.init_process_group("nccl")`
+    - `device = torch.device(f"cuda:{get_world_group().local_rank}")`
+- `third_party/VideoX-Fun/videox_fun/dist/fsdp.py:shard_model`
+  - 会把上面的 `device` 直接作为 `FSDP(..., device_id=device)`.
+- 这说明 FSDP 最终访问的设备索引直接来自 `LOCAL_RANK` / `local_rank` 语义.
+
+### 动态证据
+- 当前宿主 Python 进程里:
+  - `torch.cuda.is_available() == True`
+  - `torch.cuda.device_count() == 1`
+  - 仅有 `cuda:0`
+- 最小复现实验:
+  - `torchrun --standalone --nproc-per-node=2 /tmp/torchrun_rank_probe.py`
+- 关键输出:
+  - `rank=0 local_rank=0 world_size=2 count=1 avail=True`
+  - `rank=1 local_rank=1 world_size=2 count=1 avail=True`
+  - 两个进程访问 `device_name(1)` 都报 `AssertionError('Invalid device id')`
+
+### 当前判断
+- 已验证结论:
+  - 当前失败不是 VerseCrafter 权重加载本身的问题.
+  - 当前失败也不是 FSDP auto_wrap 深层逻辑先天坏掉.
+  - 真正的直接触发条件是: 本机当前只暴露 1 张 CUDA 设备, 但 Step 6 请求了 2 个本地 worker.
+- 主修复方向:
+  1. 在批处理入口 `single_image_multi_trajectory.py` 里提前检查 `nproc_per_node <= torch.cuda.device_count()`.
+  2. 在 `videox_fun/dist/fuser.py` 里补本地 rank / 可见 GPU 数校验, 并显式 `torch.cuda.set_device(local_rank)`, 让直接调用 Step 6 的场景也能更早失败并报清楚原因.
+- 备选方向:
+  - 静默自动降级为单卡.
+- 为什么暂不选备选方向:
+  - 这会偷偷改变用户请求的并行拓扑和显存 / 速度特征.
+  - 对多卡工作流, 静默降级比显式失败更容易制造后续误解.

@@ -227,13 +227,12 @@ pixi run pip install xfuser==0.4.2 yunchang==0.6.2 \
 
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
-  --input_image_path 'demo_data/my3/generated-image (1).png' \
-  --output_root demo_data/my3_dual_a800_test_v2 \
+  --input_image_path 'demo_data/my4/a.png' \
+  --output_root demo_data/my4 \
   --transformer_path model/VerseCrafter \
-  --prompt "A frozen-in-time futuristic AI exhibition hall interior with polished white floors, blue digital wall graphics, a concept vehicle chassis display, a glowing tunnel-like doorway, aerospace exhibits, and crisp architectural lighting. The entire scene is a single perfectly frozen instant. Every screen image, reflection, specular highlight, LED strip, light beam, prop, aircraft model, robot arm, sign, and object remains completely motionless and unchanged for the whole video. No people move. No display content animates. No lighting flicker. No changing reflections. Time is stopped. Only the camera moves through the space. Stable perspective, physically plausible reflections, realistic lens behavior, and consistent illumination." \
+  --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持丁达尔效应体积光束,保留好场景的炫光,镜头光晕,辉光,slight camera motion, high detail" \
   --negative_prompt "animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
-  --preset_indices 0 \
   --moge_version v2 \
   --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
   --auto_center_depth_quantile 0.2 \

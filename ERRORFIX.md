@@ -91,3 +91,42 @@
   - 当前工作流为什么需要 CUDA
   - Torch 当前看到的 CUDA 状态
   - `MIG 已启用但没有实例` 的定位提示
+
+## [2026-03-21 16:22:30 UTC] 问题: `my4` Step 6 双进程推理报 `CUDA error: invalid device ordinal`
+
+### 问题现象
+- `single_image_multi_trajectory.py` 在生成阶段调用:
+  - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py ...`
+- 原始失败日志显示:
+  - `rank=0 device=cuda:0`
+  - `rank=1 device=cuda:1`
+  - rank1 在 FSDP 初始化阶段报 `RuntimeError: CUDA error: invalid device ordinal`
+
+### 原因
+- 当前机器里的 PyTorch 进程只看见 1 张 CUDA 设备:
+  - `torch.cuda.is_available() == True`
+  - `torch.cuda.device_count() == 1`
+- 但 Step 6 请求了 2 个本地 worker:
+  - `--nproc-per-node=2`
+  - `ulysses_degree * ring_degree = 2`
+- `videox_fun/dist/fuser.py` 会直接用 `local_rank` 选 `cuda:{local_rank}`.
+- 因而 rank1 实际会尝试访问不存在的 `cuda:1`, 最终在更深层触发 `invalid device ordinal`.
+
+### 修复
+- 在 `single_image_multi_trajectory.py` 中新增多卡预检:
+  - 如果本次真的会进入 Step 6 多进程推理, 且 `torch.cuda.device_count() < nproc_per_node`, 就提前报清晰错误.
+- 在 `videox_fun/dist/fuser.py` 中新增本地拓扑校验:
+  - 读取 `LOCAL_RANK` / `LOCAL_WORLD_SIZE`
+  - 校验本地可见 GPU 数是否足够
+  - 显式 `torch.cuda.set_device(local_rank)`
+- 没有做静默单卡降级, 避免悄悄改变用户请求的并行拓扑.
+
+### 验证
+- `./.pixi/envs/default/bin/python -m pytest tests/test_single_image_multi_trajectory_cuda_preflight.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 结果: `10 passed in 0.76s`
+- 真实批处理命令复跑:
+  - 现在会在入口直接报 `多卡预检失败`, 并指出 `torch.cuda.device_count(): 1`、`--nproc-per-node: 2`
+- 真实 Step 6 命令复跑:
+  - 现在会在 `set_multi_gpus_devices` 直接报 `Distributed CUDA preflight failed: torchrun requested 2 local workers, but this process only sees 1 CUDA device(s).`
+- `./.pixi/envs/default/bin/python -m py_compile inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_cuda_preflight.py third_party/VideoX-Fun/videox_fun/dist/fuser.py`
+  - 结果: 通过

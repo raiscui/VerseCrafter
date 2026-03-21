@@ -488,3 +488,171 @@
 **任务已完成**
 - 代码改动和验证都已完成.
 - 若要让这条命令真正跑通, 下一步需要处理系统层的 MIG 配置.
+
+## [2026-03-21 15:46:30 UTC] 新任务启动: 排查 `my4` 双进程 Step 6 的 `CUDA error: invalid device ordinal`
+
+### 目标
+- 复现并定位 `torchrun --nproc-per-node=2 inference/versecrafter_inference.py` 在 FSDP 分片阶段触发的 `invalid device ordinal`.
+- 给出基于证据的修复, 避免继续靠猜测改多卡初始化逻辑.
+
+### 阶段
+- [ ] 阶段1: 核对运行环境与 GPU 可见性
+- [ ] 阶段2: 阅读 Step 6 与 FSDP 设备选择代码, 建立主假设与备选假设
+- [ ] 阶段3: 做最小验证并实施修复
+- [ ] 阶段4: 运行测试与真实命令验证
+
+### 现象
+- 用户提供的失败日志显示:
+  - `rank=0 device=cuda:0`
+  - `rank=1 device=cuda:1`
+  - 但 rank1 在 `third_party/VideoX-Fun/videox_fun/dist/fsdp.py` 的 `FSDP(...)` 初始化阶段报 `RuntimeError: CUDA error: invalid device ordinal`.
+- 失败点位于 FSDP 将参数移动到 `device_id` 时, 说明“脚本认定的目标设备”和“该进程真实可用的 CUDA 设备”之间可能不一致.
+
+### 主假设
+- 当前主假设: FSDP 包装时使用了全局 rank 或错误的 device_id, 而不是当前进程真实可用的 local device, 导致某个进程尝试移动到不存在的 `cuda:1`.
+- 最强备选解释: 当前机器或当前 `torchrun` 环境实际只暴露了 1 个 CUDA device, 前面的 `device=cuda:1` 只是字符串构造成功, 但真正访问设备时才失败.
+- 可推翻主假设的证据: 若环境验证显示每个进程都能稳定访问 `cuda:0/1`, 且 FSDP 实际拿到的 `device_id` 与本进程 local rank 完全一致, 那就需要转向检查 `xfuser` / `dist.init_process_group` / `CUDA_VISIBLE_DEVICES` 的传播链.
+
+### 状态
+**目前在阶段1**
+- 已重建六文件上下文.
+- 下一步先核对 GPU 可见性、`torchrun` 环境变量与相关源码实现.
+
+## [2026-03-21 16:17:20 UTC] 阶段1完成, 进入修复设计
+
+### 已完成
+- [x] 阶段1: 核对运行环境与 GPU 可见性
+- [x] 阶段2: 阅读 Step 6 与 FSDP 设备选择代码, 建立主假设与备选假设
+- [ ] 阶段3: 做最小验证并实施修复
+- [ ] 阶段4: 运行测试与真实命令验证
+
+### 验证结果
+- 宿主 Python 进程当前 `torch.cuda.device_count() == 1`.
+- 最小复现实验 `torchrun --standalone --nproc-per-node=2 /tmp/torchrun_rank_probe.py` 已证明:
+  - rank0: `local_rank=0`, count=1
+  - rank1: `local_rank=1`, count=1
+  - `device_name(1)` 对两个 rank 都是 `Invalid device id`
+- 结合 `fuser.py` 中 `device = torch.device(f"cuda:{get_world_group().local_rank}")`, 已可确认当前直接触发条件是:
+  - 请求了 2 个本地 worker, 但当前仅 1 张可见 CUDA 设备.
+
+### 修复决策
+- 决定: 不做静默单卡降级.
+  - 理由: 会隐式改变用户请求的多卡拓扑.
+- 决定: 增加双层预检.
+  - 批处理入口先拦截 `nproc_per_node > visible_cuda_devices`.
+  - Step 6 分布式入口再做本地 rank / visible device 校验, 并显式 `torch.cuda.set_device(local_rank)`.
+
+### 状态
+**目前在阶段3**
+- 下一步开始修改 `single_image_multi_trajectory.py`、`videox_fun/dist/fuser.py` 与对应测试.
+
+## [2026-03-21 13:40:00 UTC] 新任务启动: 为 `clockwise` 增加两个半径变体镜头动作
+
+### 目标
+- 使用 OpenSpec 新建一个变更, 描述新增两个镜头动作:
+  - `clockwise_0.65`
+  - `clockwise_1.5`
+- 这两个动作的轨迹语义与现有 `clockwise` 一致, 但轨道半径分别为当前 `clockwise` 的 `0.65` 倍和 `1.5` 倍.
+- 只创建 change 与读取第一个 artifact 模板, 不提前起草 artifact 内容.
+
+### 阶段
+- [x] 阶段1: 读取上下文文件与 skill 说明
+- [ ] 阶段2: 确定 change 名称并检查是否已存在
+- [ ] 阶段3: 创建 OpenSpec change
+- [ ] 阶段4: 查看 change 状态并读取首个 artifact 指令
+- [ ] 阶段5: 汇总 change 信息并等待用户决定是否继续起草 artifact
+
+### 关键问题
+1. 这个变更名应该强调“新增镜头动作”, 还是强调“clockwise 半径变体”.
+2. 当前仓库是否已经存在同名或高度重叠的 change, 需要避免重复创建.
+
+### 备选方向
+- 方案A: `add-clockwise-radius-variants`
+  - 优点: 直接表达“在现有 clockwise 基础上增加半径变体”.
+- 方案B: `add-clockwise-camera-motion-presets`
+  - 优点: 更强调用户可见层面的“新增镜头动作 preset”.
+
+### 做出的决定
+- 暂定优先尝试方案A: `add-clockwise-radius-variants`.
+  - 理由: 用户需求核心不是新增任意镜头, 而是基于现有 `clockwise` 派生两个半径尺度变体.
+
+### 遇到的错误
+- 暂无.
+
+### 状态
+**目前在阶段2**
+- 已完成六文件上下文回读和 `openspec-new-change` skill 说明读取.
+- 正在确认 change 名称可用, 然后创建 OpenSpec change.
+
+## [2026-03-21 13:43:00 UTC] OpenSpec change 创建完成, 已到首个 artifact 指令阶段
+
+### 验证
+- 已创建 change:
+  - `openspec/changes/add-clockwise-radius-variants/`
+- OpenSpec 状态:
+  - Schema: `spec-driven`
+  - Progress: `0/4 artifacts complete`
+  - `proposal`: ready
+  - `design`: blocked by `proposal`
+  - `specs`: blocked by `proposal`
+  - `tasks`: blocked by `design, specs`
+- 已读取首个 artifact:
+  - `proposal`
+  - 输出路径: `openspec/changes/add-clockwise-radius-variants/proposal.md`
+
+### 做出的决定
+- 决定: 使用默认 `spec-driven` workflow, 不额外传 `--schema`.
+  - 理由: 用户没有指定其他 schema, 按 `openspec-new-change` skill 应使用默认流程.
+- 决定: 采用 change 名称 `add-clockwise-radius-variants`.
+  - 理由: 这个名字最准确表达“在现有 `clockwise` 基础上新增半径尺度变体”.
+
+### 状态
+**目前在阶段5**
+- change 已创建完成.
+- 已拿到 `proposal` 的模板与写作要求.
+- 当前按 skill 要求停止在“等待用户决定是否继续起草第一个 artifact”.
+
+## [2026-03-21 16:22:30 UTC] 修复与验证完成
+
+### 已完成
+- [x] 阶段1: 核对运行环境与 GPU 可见性
+- [x] 阶段2: 阅读 Step 6 与 FSDP 设备选择代码, 建立主假设与备选假设
+- [x] 阶段3: 做最小验证并实施修复
+- [x] 阶段4: 运行测试与真实命令验证
+
+### 实施内容
+- 在 `inference/single_image_multi_trajectory.py` 中新增多卡 Step 6 预检:
+  - 记录 `CUDA_VISIBLE_DEVICES`
+  - 判断本次是否真的会进入多进程 Step 6
+  - 若 `nproc_per_node > torch.cuda.device_count()` 则直接抛出清晰错误
+- 在 `third_party/VideoX-Fun/videox_fun/dist/fuser.py` 中新增本地 worker 拓扑校验:
+  - 读取 `LOCAL_RANK` / `LOCAL_WORLD_SIZE`
+  - 校验 `LOCAL_RANK` 是否落在可见 GPU 范围内
+  - 显式 `torch.cuda.set_device(local_rank)`
+  - 修正日志里的 `classifier_free_guidance_degree` 格式串
+- 在 `tests/test_single_image_multi_trajectory_cuda_preflight.py` 中补充多卡预检单测.
+
+### 验证命令
+- `./.pixi/envs/default/bin/python -m pytest tests/test_single_image_multi_trajectory_cuda_preflight.py tests/test_single_image_multi_trajectory_smoke.py -q`
+- `./.pixi/envs/default/bin/python inference/single_image_multi_trajectory.py ... --ulysses_degree 2 --ring_degree 1 --nproc_per_node 2`
+- `./.pixi/envs/default/bin/torchrun --nproc-per-node=2 inference/versecrafter_inference.py ...`
+- `./.pixi/envs/default/bin/python -m py_compile inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_cuda_preflight.py third_party/VideoX-Fun/videox_fun/dist/fuser.py`
+
+### 验证结果
+- 单测:
+  - `10 passed in 0.76s`
+- 整链路入口现在会在 Step 1 前直接报出:
+  - `多卡预检失败`
+  - `torch.cuda.device_count(): 1`
+  - `--nproc-per-node: 2`
+- 直接运行 Step 6 现在会在 `set_multi_gpus_devices` 处更早失败:
+  - `Distributed CUDA preflight failed: torchrun requested 2 local workers, but this process only sees 1 CUDA device(s).`
+- `py_compile` 通过.
+
+### 最终结论
+- 已验证结论: 当前机器这次只暴露了 1 张 CUDA 设备, 与请求的 2 个本地 worker 不匹配.
+- 已验证结论: 现在无论走批处理入口还是直跑 Step 6, 都能在更早的位置给出可读错误, 不再掉进 FSDP 深层 `invalid device ordinal` 栈.
+
+### 状态
+**任务已完成**
+- 代码修改、测试验证、日志回写均已完成.

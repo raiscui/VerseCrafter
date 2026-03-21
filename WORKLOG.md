@@ -118,3 +118,38 @@
 ### 总结感悟
 - 这次最容易误判的地方是: `nvidia-smi` 看得到物理卡, 不代表 CUDA runtime 就真的有可执行设备.
 - 对 MIG 机器, “MIG 已开但没有实例”是一种非常容易让应用层误以为“GPU 明明在却不能用”的状态, 最值得在编排层提前显性化.
+
+## [2026-03-21 13:43:00 UTC] 任务名称: 创建 `clockwise` 半径变体的 OpenSpec change
+
+### 任务内容
+- 根据用户需求, 为新增两个镜头动作 `clockwise_0.65` 与 `clockwise_1.5` 创建新的 OpenSpec change.
+- 保持这两个动作与现有 `clockwise` 语义一致, 仅改变轨道半径倍率, 分别为当前半径的 `0.65` 倍与 `1.5` 倍.
+- 只执行到 change 创建、状态查看、首个 artifact 指令读取, 不提前起草 artifact.
+
+### 完成过程
+- 回读项目上下文文件, 确认当前仓库已有一个历史 OpenSpec change, 且没有同名 change 冲突.
+- 结合用户需求推导出更贴切的 change 名称 `add-clockwise-radius-variants`.
+- 执行 `openspec new change "add-clockwise-radius-variants"`, 成功创建 `spec-driven` schema 的 change 目录.
+- 执行 `openspec status --change "add-clockwise-radius-variants"`, 确认当前进度为 `0/4`, 且首个 ready artifact 为 `proposal`.
+- 执行 `openspec instructions proposal --change "add-clockwise-radius-variants"`, 获取 `proposal.md` 的输出路径、章节要求和模板.
+
+### 总结感悟
+- 对这种“需求已经清楚, 但还不应该直接动代码”的场景, 先落一个 OpenSpec change 很合适, 后面的 proposal / design / specs / tasks 会更稳.
+- `add-clockwise-radius-variants` 比“泛泛地说新增镜头 preset”更准确, 因为这次变化的核心语义就是对现有 `clockwise` 的半径尺度扩展.
+
+## [2026-03-21 16:22:30 UTC] 任务名称: 修复 `my4` 双进程 Step 6 的 `invalid device ordinal` 预检缺失
+
+### 任务内容
+- 排查 `demo_data/my4` 在 Step 6 多进程推理阶段出现的 `CUDA error: invalid device ordinal`.
+- 为整链路入口和 Step 6 直跑入口都补充更早、更清晰的多卡拓扑预检.
+
+### 完成过程
+- 先做静态排查, 确认 `videox_fun/dist/fuser.py` 使用 `local_rank` 直接选择 `cuda:{local_rank}`.
+- 再做动态最小实验, 用 `torchrun --standalone --nproc-per-node=2` 验证当前机器里两个进程都只看见 `device_count=1`.
+- 在 `single_image_multi_trajectory.py` 里新增 Step 6 多卡预检, 把 “可用 CUDA” 和 “足够多的本地 CUDA 设备” 分开检查.
+- 在 `videox_fun/dist/fuser.py` 里新增 `LOCAL_RANK` / `LOCAL_WORLD_SIZE` 校验, 并显式 `torch.cuda.set_device(local_rank)`.
+- 最后补单测, 并分别验证批处理入口和 Step 6 直接入口的新报错行为.
+
+### 总结感悟
+- `torch.cuda.is_available() == True` 只说明“至少能初始化某张 CUDA 设备”, 并不说明“足够支撑当前 `torchrun` 的本地 worker 数”.
+- 对多卡脚本, 比起事后在 FSDP 深层崩掉, 更好的做法是在入口显式比较 `nproc_per_node` 和 `torch.cuda.device_count()`.
