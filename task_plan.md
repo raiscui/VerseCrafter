@@ -392,3 +392,99 @@
 - `my3` 当前已具备两版可对比结果:
   - 10 步: `demo_data/my3_dual_a800_test_v2/0/generated_videos/generated_video_0.mp4`
   - 60 步: `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`
+
+## [2026-03-21 13:05:00 UTC] 新任务启动: 排查 `single_image_multi_trajectory.py` 在深度阶段强制使用 CUDA 失败
+
+### 目标
+- 搞清楚 `demo_data/my4` 这次运行失败的真实原因.
+- 若问题在脚本设备选择逻辑, 给出并验证正确修复.
+- 若问题纯属环境缺少可用 GPU, 让脚本更早给出清晰结论, 或在可接受时自动回退.
+
+### 阶段
+- [ ] 阶段1: 动态验证当前 Pixi 环境中的 GPU / CUDA 可见性
+- [ ] 阶段2: 静态排查 `single_image_multi_trajectory.py` 与 `moge-v2_infer.py` 的设备选择逻辑
+- [ ] 阶段3: 设计并实现最合理修复
+- [ ] 阶段4: 运行验证命令, 回写日志与结论
+
+### 现象
+- 批处理入口始终调用:
+  - `inference/moge-v2_infer.py ... --device cuda`
+- 运行时在 `torch._C._cuda_init()` 报错:
+  - `RuntimeError: No CUDA GPUs are available`
+- 即使显式传入 `--moge_pretrained` 与 `--moge_version v2`, 报错保持不变.
+
+### 当前主假设
+- 主假设: 当前运行环境里 PyTorch 看不到可用 CUDA 设备, 但编排脚本没有在调用 MoGe 前做可用性判断, 仍无条件拼出 `--device cuda`.
+- 备选假设: 机器有 GPU, 但当前 Pixi / Torch / 容器可见性配置异常, 使 `torch.cuda.is_available()` 为假.
+
+### 验证计划
+- 先动态执行:
+  - `nvidia-smi`
+  - `pixi run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"`
+- 再静态检查:
+  - `single_image_multi_trajectory.py` 中构造 MoGe 命令的位置
+  - `moge-v2_infer.py` 中 `device` 的默认和错误处理
+
+### 状态
+**目前在阶段1**
+- 已记录现象与候选假设.
+- 下一步先拿动态证据确认当前环境里的 GPU 实际状态.
+
+## [2026-03-21 13:18:00 UTC] 进入修复设计阶段
+
+### 新结论
+- 已有动态证据表明:
+  - 物理 GPU 存在.
+  - 但当前 CUDA runtime 对 PyTorch 不可用.
+- 已有静态 / 外部资料线索表明:
+  - 当前最强候选根因是 MIG 已开启但没有任何 MIG instance.
+
+### 修复决策
+- 不在仓库内偷偷改成 CPU fallback.
+  - 理由: Step 6 VerseCrafter generation 仍然需要 CUDA, 只改 Step 1 会把失败延后, 不是根治.
+- 在批处理入口增加 CUDA 预检.
+  - 理由: 让这类环境问题在任务真正开始前就被清晰暴露, 并给出 MIG 定位提示.
+- 为预检逻辑补单测.
+  - 理由: 防止以后重构时又退回到深栈报错.
+
+### 状态
+**目前在阶段3**
+- 下一步修改 `single_image_multi_trajectory.py`.
+- 同时新增针对 CUDA 预检分支的测试.
+
+## [2026-03-21 13:22:00 UTC] 修复与验证完成
+
+### 已完成
+- [x] 阶段1: 动态验证当前 Pixi 环境中的 GPU / CUDA 可见性
+- [x] 阶段2: 静态排查 `single_image_multi_trajectory.py` 与 `moge-v2_infer.py` 的设备选择逻辑
+- [x] 阶段3: 设计并实现最合理修复
+- [x] 阶段4: 运行验证命令, 回写日志与结论
+
+### 验证命令
+- `nvidia-smi`
+- `pixi run python -c "import torch; ..."`
+- `pixi run pytest tests/test_single_image_multi_trajectory_cuda_preflight.py tests/test_single_image_multi_trajectory_smoke.py -q`
+- `pixi run python inference/single_image_multi_trajectory.py ...`
+
+### 验证结果
+- `nvidia-smi` 能看到 A800, 但 `torch.cuda.is_available() == False`.
+- `nvidia-smi` 显示:
+  - `MIG Mode: Enabled`
+  - `No MIG devices found`
+- 新增的 CUDA 预检已在真实命令中生效.
+- 单测结果:
+  - `7 passed in 0.84s`
+- 真实命令现在会在真正起重流程前直接报出清晰错误, 并指出 MIG 无实例这一高概率原因.
+
+### 最终结论
+- 已验证结论: 当前失败不是 `--moge_pretrained` / `--moge_version` 参数问题.
+- 已验证结论: 当前环境中的物理 GPU 存在, 但 CUDA runtime 对 PyTorch 不可用.
+- 当前最强并已有静态 + 动态证据支撑的结论是:
+  - 该 A800 处于 MIG Enabled 但无 MIG device 的状态, 导致 VerseCrafter / MoGe 无法取得可执行 CUDA 设备.
+- 仓库内已完成的改进是:
+  - 在批处理入口增加前置 CUDA 预检, 避免再次掉进深层栈报错.
+
+### 状态
+**任务已完成**
+- 代码改动和验证都已完成.
+- 若要让这条命令真正跑通, 下一步需要处理系统层的 MIG 配置.

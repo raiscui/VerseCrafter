@@ -46,6 +46,24 @@
   - 单卡最稳妥常用: model_cpu_offload_and_qfloat8
   - 显存特别紧张: sequential_cpu_offload
 
+##  demo_data/my4  用这个图 跑下 单镜头 快速测试 命令是?
+
+  pixi run python inference/single_image_multi_trajectory.py \
+    --input_image_path demo_data/my4/a.png \
+    --output_root demo_data/my4/quick_test \
+    --transformer_path model/VerseCrafter \
+    --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持丁达尔效应体积光束,保留好场景的炫光,镜头光晕,辉光,slight camera motion, high detail" \
+    --camera_only \
+    --preset_indices 0 \
+    --num_inference_steps 12 \
+    --sample_size "720,1280" \
+    --gpu_memory_mode model_cpu_offload_and_qfloat8 \
+    --ulysses_degree 1 \
+    --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+    --moge_version v2 \
+    --ring_degree 1
+
+
 ## 1. 推荐: 单图只相机控制整链路命令
 
 - 用途:

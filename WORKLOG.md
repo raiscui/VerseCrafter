@@ -94,3 +94,27 @@
 ### 总结感悟
 - 对这种对比测试, 最优路径就是复用已验证的 `rendering_4D_maps` 直接重跑 Step 6.
 - TeaCache 对长步数任务的加速是肉眼可见的, 所以 60 步虽然更慢, 但不会完全按 10 步的 6 倍增长.
+
+## [2026-03-21 13:22:00 UTC] 任务名称: 为单图多轨迹批处理补充 CUDA / MIG 预检
+
+### 任务内容
+- 排查 `demo_data/my4` 在深度阶段报 `No CUDA GPUs are available` 的原因.
+- 为 `inference/single_image_multi_trajectory.py` 增加更早、更清楚的 CUDA 预检.
+- 补测试, 防止以后再次退回深栈报错.
+
+### 完成过程
+- 先做动态验证, 确认 `nvidia-smi` 能看到一张 A800, 但 PyTorch 里 `torch.cuda.is_available()` 为 `False`, `torch.cuda.get_device_name(0)` 直接报 `No CUDA GPUs are available`.
+- 再核对 `nvidia-smi` 输出, 发现这张卡处于 `MIG Mode: Enabled`, 同时又是 `No MIG devices found`.
+- 结合 NVIDIA MIG User Guide, 确认“仅开启 MIG, 但没有创建 GPU / Compute instance”时, CUDA workload 不能在该 GPU 上运行.
+- 在批处理入口新增 CUDA 需求判定与预检逻辑:
+  - 只有当本次运行真的需要 CUDA 时才检查, 避免误伤“全部复用输出”的 resume 场景.
+  - 一旦检测失败, 直接给出 Torch 状态、失败原因和 MIG 提示.
+- 新增 `tests/test_single_image_multi_trajectory_cuda_preflight.py`, 覆盖:
+  - 最终生成缺失时必须要求 CUDA
+  - resume 且产物完整时应跳过预检
+  - 预检报错应透出 MIG 提示
+- 跑通测试与真实命令回归, 确认新错误信息已经生效.
+
+### 总结感悟
+- 这次最容易误判的地方是: `nvidia-smi` 看得到物理卡, 不代表 CUDA runtime 就真的有可执行设备.
+- 对 MIG 机器, “MIG 已开但没有实例”是一种非常容易让应用层误以为“GPU 明明在却不能用”的状态, 最值得在编排层提前显性化.

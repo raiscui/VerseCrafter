@@ -306,3 +306,39 @@
 - 当前目录里已经同时有可对比的两版结果:
   - 10 步: `generated_videos/generated_video_0.mp4`
   - 60 步: `generated_videos_steps60_compare/generated_video_0.mp4`
+
+## [2026-03-21 13:12:00 UTC] `my4` CUDA 初始化失败的动态证据
+
+### 已验证现象
+- `nvidia-smi` 能看到物理 GPU:
+  - `NVIDIA A800-SXM4-80GB`
+- 但 Pixi 环境里的 PyTorch 不能真正初始化 CUDA:
+  - `torch.cuda.is_available() -> False`
+  - `torch.cuda.device_count() -> 1`
+  - `torch.cuda.get_device_name(0)` 报:
+    - `RuntimeError: No CUDA GPUs are available`
+  - `torch.tensor([1.0], device="cuda")` 同样报:
+    - `RuntimeError: No CUDA GPUs are available`
+
+### 新假设
+- 单纯说“没有 GPU”并不准确.
+- 更像是: NVML / 驱动层能看到物理卡, 但 CUDA 运行时拿不到可执行计算的设备实例.
+
+### 静态 + 外部资料线索
+- `nvidia-smi` 输出里明确显示:
+  - `MIG Mode: Enabled`
+  - `No MIG devices found`
+- NVIDIA MIG User Guide 写明:
+  - “Without creating GPU instances (and corresponding compute instances), CUDA workloads cannot be run on the GPU.”
+- 这与当前现象吻合:
+  - 物理卡在
+  - CUDA workload 仍报无可用 GPU
+
+### 当前判断
+- 当前最强主假设是:
+  - 这张 A800 被切到了 MIG 模式, 但还没有创建 GPU / Compute instance, 所以 VerseCrafter / MoGe 这类 CUDA 程序都无法真正拿到可执行设备.
+- 备选解释仍然是:
+  - 还存在别的 CUDA 运行时初始化问题.
+- 但要推翻当前主假设, 至少要出现这样的证据之一:
+  - 创建 MIG instance 或关闭 MIG 后, PyTorch 仍旧 `No CUDA GPUs are available`
+  - 或在另一个已知正常的 CUDA 程序里也表现为完全不同的底层错误.

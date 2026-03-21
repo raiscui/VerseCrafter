@@ -197,6 +197,214 @@ def run_command(command: list[str], *, cwd: Path) -> None:
     subprocess.run(command, cwd=str(cwd), check=True)
 
 
+def is_cuda_device(device_name: str) -> bool:
+    """判断当前 device 字符串是否指向 CUDA."""
+
+    normalized = device_name.strip().lower()
+    return normalized == "cuda" or normalized.startswith("cuda:")
+
+
+def probe_torch_cuda_runtime() -> dict[str, Any]:
+    """读取当前 Python 进程里的 Torch CUDA 可用性.
+
+    这里故意只做最小探测.
+    目标不是替代完整诊断工具,
+    而是在真正开跑前尽早发现“CUDA 根本不可初始化”的情况.
+    """
+
+    payload: dict[str, Any] = {}
+    try:
+        import torch  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        payload["torch_import_error"] = repr(exc)
+        return payload
+
+    payload["torch_version"] = getattr(torch, "__version__", "unknown")
+    payload["compiled_cuda"] = getattr(torch.version, "cuda", None)
+
+    try:
+        payload["cuda_available"] = bool(torch.cuda.is_available())
+    except Exception as exc:  # noqa: BLE001
+        payload["cuda_available_error"] = repr(exc)
+
+    try:
+        payload["device_count"] = int(torch.cuda.device_count())
+    except Exception as exc:  # noqa: BLE001
+        payload["device_count_error"] = repr(exc)
+
+    try:
+        payload["device_name_0"] = torch.cuda.get_device_name(0)
+    except Exception as exc:  # noqa: BLE001
+        payload["device_name_0_error"] = repr(exc)
+
+    return payload
+
+
+def detect_mig_no_instance_hint() -> str | None:
+    """检查 `nvidia-smi` 是否处于“MIG 已开但没有实例”的高风险状态."""
+
+    nvidia_smi_bin = shutil.which("nvidia-smi")
+    if nvidia_smi_bin is None:
+        return None
+
+    # 这里同时读取 summary 和 detail.
+    # summary 里容易看到 "No MIG devices found", detail 里容易看到 MIG 是否 Enabled.
+    summary_result = subprocess.run(
+        [nvidia_smi_bin],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    detail_result = subprocess.run(
+        [nvidia_smi_bin, "-q"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    combined_output = "\n".join(
+        part
+        for part in [
+            summary_result.stdout,
+            summary_result.stderr,
+            detail_result.stdout,
+            detail_result.stderr,
+        ]
+        if part
+    )
+
+    if (
+        "MIG Mode" in combined_output
+        and "Current                           : Enabled" in combined_output
+        and "No MIG devices found" in combined_output
+    ):
+        return (
+            "nvidia-smi 显示 GPU 已启用 MIG, 但当前没有任何 MIG device. "
+            "这种状态下 CUDA workload 通常拿不到可执行设备. "
+            "需要先创建 GPU instance / compute instance, 或关闭 MIG 后再重试."
+        )
+
+    return None
+
+
+def explain_why_cuda_is_needed(
+    args: argparse.Namespace,
+    *,
+    output_root: Path,
+    active_preset_specs: list[dict[str, Any]],
+) -> str | None:
+    """判断这次运行是否真的需要 CUDA.
+
+    这里特意把“是否需要 CUDA”拆成两类:
+    1. Step 6 最终生成一定依赖 CUDA.
+    2. Step 1/2/3/5 是否依赖 CUDA, 取决于 `--device`.
+    这样就不会把“所有输出都已复用”的 resume 场景误判成必须要 GPU.
+    """
+
+    if not args.resume:
+        return "resume 已关闭, 本次会重新执行 Step 6 最终视频生成, 而 VerseCrafter generation 依赖 CUDA"
+
+    for preset in active_preset_specs:
+        preset_dir = output_root / str(preset["index"])
+        generated_videos_dir = preset_dir / "generated_videos"
+        if find_generated_video(generated_videos_dir) is None:
+            return (
+                f"preset {preset['index']} ({preset['name']}) 缺少最终生成视频, "
+                "本次会执行 Step 6 最终视频生成, 而 VerseCrafter generation 依赖 CUDA"
+            )
+
+    if not is_cuda_device(args.device):
+        return None
+
+    shared_dir = output_root / "shared"
+    estimated_depth_dir = shared_dir / "estimated_depth"
+    foreground_masks_dir = shared_dir / "foreground_masks"
+    masks_dir = foreground_masks_dir / "masks"
+    gaussian_output_dir = shared_dir / "fitted_3D_gaussian"
+    depth_npz_path = estimated_depth_dir / "depth_intrinsics.npz"
+    gaussian_json_path = gaussian_output_dir / "gaussian_params.json"
+
+    if not is_existing_nonempty_file(depth_npz_path):
+        return f"共享深度估计缺失, 本次会以 --device {args.device} 执行 Step 1"
+
+    if args.camera_only:
+        if not is_camera_only_mask_dir(masks_dir) or not is_camera_only_gaussian_json(gaussian_json_path):
+            return f"camera-only 共享产物缺失, 本次会以 --device {args.device} 继续预处理阶段"
+    else:
+        if not has_mask_pngs(masks_dir):
+            return f"前景分割结果缺失, 本次会以 --device {args.device} 执行 Step 2"
+        if not is_existing_nonempty_file(gaussian_json_path):
+            return f"3D Gaussian 拟合结果缺失, 本次会以 --device {args.device} 执行 Step 3"
+
+    for preset in active_preset_specs:
+        preset_dir = output_root / str(preset["index"])
+        rendering_maps_dir = preset_dir / "rendering_4D_maps"
+        generated_videos_dir = preset_dir / "generated_videos"
+        existing_video = find_generated_video(generated_videos_dir)
+        if existing_video is not None and not is_valid_render_output_dir(rendering_maps_dir):
+            return (
+                f"preset {preset['index']} ({preset['name']}) 缺少完整的 rendering_4D_maps, "
+                f"本次会以 --device {args.device} 执行 Step 5"
+            )
+
+    return None
+
+
+def build_cuda_preflight_error_message(
+    *,
+    requested_device: str,
+    required_reason: str,
+    probe_payload: dict[str, Any],
+    mig_hint: str | None,
+) -> str:
+    """拼出更可读的 CUDA 预检报错."""
+
+    lines = [
+        "CUDA 预检失败: 当前工作流接下来需要可用的 CUDA, 但当前 Python / Torch 进程不能成功初始化 CUDA.",
+        f"- 触发原因: {required_reason}",
+        f"- 预处理参数 --device: {requested_device}",
+        f"- torch 版本: {probe_payload.get('torch_version', 'unknown')}",
+        f"- torch 编译 CUDA: {probe_payload.get('compiled_cuda', 'unknown')}",
+        f"- torch.cuda.is_available(): {probe_payload.get('cuda_available', probe_payload.get('cuda_available_error', 'unknown'))}",
+        f"- torch.cuda.device_count(): {probe_payload.get('device_count', probe_payload.get('device_count_error', 'unknown'))}",
+        f"- torch.cuda.get_device_name(0): {probe_payload.get('device_name_0', probe_payload.get('device_name_0_error', 'unknown'))}",
+    ]
+
+    if "torch_import_error" in probe_payload:
+        lines.append(f"- torch 导入失败: {probe_payload['torch_import_error']}")
+
+    if mig_hint is not None:
+        lines.append(f"- MIG 提示: {mig_hint}")
+
+    lines.extend(
+        [
+            "- 说明: 仅修改 --moge_pretrained 或 --moge_version 不会解决这里的失败, 因为错误发生在 CUDA 初始化阶段, 还没真正进入模型权重推理.",
+            "- 建议: 先让当前环境出现一个可被 CUDA 使用的设备, 然后再重跑本批处理.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def ensure_cuda_runtime_ready_or_raise(
+    *,
+    requested_device: str,
+    required_reason: str,
+) -> None:
+    """在真正起重流程前确认 CUDA 运行时可用."""
+
+    probe_payload = probe_torch_cuda_runtime()
+    if probe_payload.get("cuda_available") is True:
+        return
+
+    raise RuntimeError(
+        build_cuda_preflight_error_message(
+            requested_device=requested_device,
+            required_reason=required_reason,
+            probe_payload=probe_payload,
+            mig_hint=detect_mig_no_instance_hint(),
+        )
+    )
+
+
 def has_mask_pngs(mask_dir: Path) -> bool:
     """检查 segmentation 的单体 mask 是否存在."""
 
@@ -803,6 +1011,17 @@ def main() -> None:
     save_manifest(manifest_path, manifest)
 
     try:
+        cuda_required_reason = explain_why_cuda_is_needed(
+            args,
+            output_root=output_root,
+            active_preset_specs=active_preset_specs,
+        )
+        if cuda_required_reason is not None:
+            ensure_cuda_runtime_ready_or_raise(
+                requested_device=args.device,
+                required_reason=cuda_required_reason,
+            )
+
         # ------------------------------------------------------------------
         # Shared step 1: depth estimation
         # ------------------------------------------------------------------

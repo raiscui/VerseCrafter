@@ -92,3 +92,37 @@
 ### 后续讨论入口
 - 下次评估 VerseCrafter 长步数任务耗时时, 不要在前 1~5 步就下结论.
 - 应至少观察到 TeaCache 生效后的若干步再判断剩余时间.
+
+## [2026-03-21 13:22:00 UTC] 主题: `nvidia-smi` 看得到 GPU, 不等于 Torch 就真的拿得到 CUDA 设备
+
+### 发现来源
+- 在 `demo_data/my4` 的 VerseCrafter 单图多轨迹排查中, 终端表面上能看到 A800, 但 PyTorch 仍报 `No CUDA GPUs are available`.
+
+### 核心问题
+- 对 MIG 机器来说, 物理卡可见只是第一层.
+- 如果 GPU 处于 `MIG Mode: Enabled`, 但没有任何 `MIG device`, 应用层依然会表现得像“没有可用 CUDA GPU”.
+
+### 为什么重要
+- 这种状态极其容易误导排查方向.
+- 人很容易把时间浪费在:
+  - `--moge_pretrained` 是否写错
+  - Torch / CUDA 版本是否不匹配
+  - 命令参数是否拼错
+- 实际上, 真正的问题可能在系统层的 MIG 实例状态.
+
+### 当前结论
+- `nvidia-smi` 可见 + `torch.cuda.device_count() == 1` 并不能单独证明 CUDA 可用.
+- 还必须结合:
+  - `torch.cuda.is_available()`
+  - `torch.cuda.get_device_name(0)`
+  - MIG 是否开启且是否真的创建了实例
+- 对 VerseCrafter 这类长链路编排脚本, 最好在入口显式做 CUDA 预检.
+
+### 未来风险
+- 以后任何多步骤 CUDA 工作流, 只要运行在 MIG 机器上, 都可能重复踩到“前面看起来像有 GPU, 但真正跑时说没有设备”的坑.
+
+### 后续讨论入口
+- 如果下一步要真正把命令跑通, 先看当前机器是要:
+  - 创建 MIG instance
+  - 还是直接关闭 MIG
+- 然后再重新验证 `torch.cuda.is_available()` 与 `torch.cuda.get_device_name(0)`.
