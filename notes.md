@@ -511,3 +511,163 @@
   - lib 单测中的 preset 名单与比例关系
   - smoke test 中的 dry-run / subset 输出
   - README 从 six 改到 eight
+
+## [2026-03-22 07:24:30 UTC] apply 实施前静态定位: `clockwise` 半径变体
+
+### 现象
+- `inference/single_image_multi_trajectory_lib.py` 里 `TrajectoryPreset` 目前只有:
+  - `index`
+  - `name`
+  - `movement_distance_range`
+  - `kind`
+- 现有 `TRAJECTORY_PRESETS` 只有 6 条, `clockwise` 是唯一 `orbit` preset.
+- `generate_blender_camera_trajectory()` 当前仍用:
+  - `if trajectory_name == "clockwise":`
+  - `else: _generate_linear_offsets_cv(...)`
+- `inference/single_image_multi_trajectory.py` 里 `--preset_indices` 还是:
+  - `choices=range(6)`
+
+### 静态结论
+- 新增 `clockwise_0.65` / `clockwise_1.5` 的真正阻塞点不是 dry-run 或 manifest.
+- 更关键的阻塞点有两个:
+  - preset 数据结构还没有“orbit 半径倍率”元数据
+  - CLI 入口会先把索引 `6` / `7` 拦掉
+
+### 实现倾向
+- 在 `TrajectoryPreset` 中新增 `orbit_radius_scale`, 让 orbit 变体继续走同一条 `clockwise` 轨迹公式.
+- 让 `generate_blender_camera_trajectory()` 先查 preset 元数据, 再按 `preset.kind` 分发.
+- 把 `--preset_indices` 的 choices 改成从 `TRAJECTORY_PRESETS` 派生, 避免以后再次出现“数据已扩展, CLI 忘了同步”的分叉.
+
+## [2026-03-22 07:31:30 UTC] apply 验证结论: `clockwise` 半径变体已闭环
+
+### 静态结果
+- `TrajectoryPreset` 已新增 `orbit_radius_scale`, 新 catalog 为:
+  - `left`
+  - `right`
+  - `up`
+  - `zoom_out`
+  - `zoom_in`
+  - `clockwise`
+  - `clockwise_0.65`
+  - `clockwise_1.5`
+- `generate_blender_camera_trajectory()` 已按 `preset.kind` 分发:
+  - `linear` 继续走 `_generate_linear_offsets_cv(...)`
+  - `orbit` 统一走 `_generate_clockwise_offsets_cv(...)`
+  - 半径通过 `radius_x_factor * orbit_radius_scale` 和 `radius_y_factor * orbit_radius_scale` 缩放
+- `--preset_indices` 已改成使用 `PRESET_INDEX_CHOICES`, 不再硬编码 `range(6)`.
+
+### 动态验证
+- `python3 -m py_compile ...`
+  - 结果: 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 结果: `14 passed in 0.89s`
+
+### 测试覆盖点
+- lib 测试已锁定:
+  - 8 个 preset 的 canonical 名单
+  - 新旧 `clockwise` 档位共享同一 deterministic movement distance
+  - `clockwise_0.65` / `clockwise_1.5` 的平移轨迹分别等于基准 `clockwise` 的 `0.65x` / `1.5x`
+- smoke 测试已锁定:
+  - resume 场景下 manifest 含 8 个 preset 目录
+  - 默认 dry-run 输出出现索引 `6` / `7`
+  - subset 输入 `[7, 0, 5, 6]` 会规范化成 `[0, 5, 6, 7]`
+
+## [2026-03-22 08:05:00 UTC] 新需求设计草案: 4 个对角线 linear preset
+
+### 现象
+- 当前 linear 轨迹仍由 `_generate_linear_offsets_cv(trajectory_name=...)` 内部的 `if/elif` 决定.
+- 现在已有 linear preset:
+  - `left`
+  - `right`
+  - `up`
+  - `zoom_out`
+  - `zoom_in`
+- 用户希望继续增加:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 额外约束:
+  - `left_down`
+  - `right_down`
+  的向下幅度要比 `up` 的反方向小一半, 以免镜头进入地面.
+
+### 当前假设
+- 主假设:
+  - 这次最合适的做法, 是把 linear 轨迹方向向量抽成 preset 元数据.
+  - 然后让 `_generate_linear_offsets_cv(...)` 按方向向量直接生成位移, 不再依赖名字分支.
+- 备选解释:
+  - 继续在 `if/elif` 里硬编码 4 个新名字也能工作.
+- 为什么当前不选备选:
+  - 这会让 linear preset 分发继续膨胀.
+  - 与刚刚对 orbit 做过的数据驱动改良方向相反.
+
+### 比例设计
+- 为了让对角镜头“横向手感”接近 `left/right`, 暂定 4 个对角 preset 都沿用 `left/right` 的距离区间:
+  - `(0.2, 0.3)`
+- 为了让竖向幅度和现有 `up` 更接近, 不直接把竖向比例写成 `1.0`.
+- 当前采用的元数据比例候选:
+  - `left_up` / `right_up`: `y = -0.6`
+  - `left_down` / `right_down`: `y = +0.3`
+- 理由:
+  - 现有 `up` 的中值距离是 `0.15`, `left/right` 的中值距离是 `0.25`
+  - `0.15 / 0.25 = 0.6`
+  - 向下再砍半后就是 `0.3`
+- 这样可以同时满足:
+  - 横向保留 `left/right` 的力度
+  - 向上接近现有 `up` 的竖向量级
+  - 向下只有向上的一半, 更不容易扎地
+
+### 命名与索引假设
+- 命名使用:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 新索引追加为:
+  - `8`
+  - `9`
+  - `10`
+  - `11`
+
+## [2026-03-22 07:52:36 UTC] 4 个对角线 preset 实施结论
+
+### 静态结果
+- `TrajectoryPreset` 已新增 `linear_direction_cv`, 让 linear 轨迹也转成数据驱动.
+- 新增 preset 为:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 当前 linear preset 的关键方向元数据为:
+  - `left_up/right_up`: `y = -0.6`
+  - `left_down/right_down`: `y = +0.3`
+- 含义:
+  - 向上对角镜头的竖向量级约等于现有 `up` 相对 `left/right` 的中值比例
+  - 向下对角镜头再砍半, 以降低扎向地面的风险
+
+### 动态验证
+- `python3 -m py_compile ...`
+  - 结果: 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 最终结果: `15 passed in 1.15s`
+
+### 测试锁定点
+- lib 测试新增锁定:
+  - 12 个 preset 的 canonical 名单
+  - 4 个对角镜头的 deterministic movement distance
+  - 对角镜头横向分量与 `left/right` 一致
+  - `left_up/right_up` 的竖向分量等于 `up` 的 `0.6x`
+  - `left_down/right_down` 的竖向分量等于 `-up` 的 `0.3x`
+- smoke 测试新增锁定:
+  - manifest 含 `8..11` 号目录
+  - 默认 dry-run 输出含对角镜头
+  - subset 输入会对新索引做 canonical 排序
+
+### 中途失败与修正
+- 现象:
+  - resume smoke test 初次失败
+- 原因:
+  - 测试把 manifest 字典键 `'0'...'11'` 当字符串排序, 导致 `'10'` / `'11'` 插到了 `'2'` 前面
+- 修正:
+  - 改为先转整数再比较排序结果

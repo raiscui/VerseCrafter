@@ -821,3 +821,189 @@
 **任务已完成**
 - 该 change 已可直接进入实现阶段.
 - 下一步应基于 `tasks.md` 开始修改代码和测试.
+
+## [2026-03-22 07:21:40 UTC] 开始 apply `add-clockwise-radius-variants`
+
+### 目标
+- 按 `openspec/changes/add-clockwise-radius-variants/tasks.md` 完成 7 个待办.
+- 在不破坏现有 `clockwise` 语义和索引 `0..5` 的前提下, 新增 `clockwise_0.65` 与 `clockwise_1.5`.
+- 同步补齐 README、回归测试与 OpenSpec task 勾选状态, 最后跑聚焦测试验证通过.
+
+### 阶段
+- [ ] 阶段1: 回读六文件与 OpenSpec 上下文, 锁定实现边界
+- [ ] 阶段2: 实现 preset 元数据与 orbit 半径变体
+- [ ] 阶段3: 更新选择链路、dry-run / manifest 与 README
+- [ ] 阶段4: 扩展 lib / smoke 测试
+- [ ] 阶段5: 运行聚焦验证并回写日志
+
+### 关键问题
+1. 新增 preset 应该用元数据表达半径倍率, 还是继续堆名字分支.
+2. 现有 canonical 索引、subset 选择与 dry-run 输出, 哪些地方会直接依赖 preset 列表长度和顺序.
+3. orbit 半径比例要用什么动态证据锁定, 才能保证“只改半径, 不改语义”.
+
+### 做出的决定
+- 决定: 严格按 OpenSpec `design.md` 的数据驱动方案实现 orbit 半径倍率.
+  - 理由: 这样能避免继续新增 `if trajectory_name == ...` 的特殊分支.
+- 决定: 先读实现与测试文件, 再动代码.
+  - 理由: 这次变化同时影响 preset 注册表、用户可见输出与测试口径, 不能凭记忆改.
+
+### 状态
+**目前在阶段1**
+- 已确认 change: `add-clockwise-radius-variants`
+- schema: `spec-driven`
+- 进度: `0/7` tasks complete
+- 正在回读实现文件与测试文件, 准备开始代码修改.
+
+## [2026-03-22 07:24:30 UTC] 阶段1完成, 开始实现 preset / orbit / CLI 改造
+
+### 已完成
+- [x] 阶段1: 回读六文件与 OpenSpec 上下文, 锁定实现边界
+- [ ] 阶段2: 实现 preset 元数据与 orbit 半径变体
+- [ ] 阶段3: 更新选择链路、dry-run / manifest 与 README
+- [ ] 阶段4: 扩展 lib / smoke 测试
+- [ ] 阶段5: 运行聚焦验证并回写日志
+
+### 新发现
+- `inference/single_image_multi_trajectory_lib.py` 当前只定义了 6 个 preset, 且 `generate_blender_camera_trajectory()` 仍硬编码 `trajectory_name == "clockwise"`.
+- `inference/single_image_multi_trajectory.py` 的 `--preset_indices` 仍写死为 `choices=range(6)`, 这是新增索引 `6` / `7` 的直接拦截点.
+- dry-run 与 manifest 本身是跟着 `preset_specs` 走的, 只要 preset 列表和 CLI choices 更新, 展示链路大多会自动扩展.
+
+### 当前动作
+- 先把 orbit 半径倍率抽进 `TrajectoryPreset` 元数据.
+- 再把 orbit 分发从“按名字硬编码”改成“按 preset.kind + 半径倍率”决定.
+- 同步放开 `--preset_indices` 到新的 canonical 索引集合.
+
+### 状态
+**目前在阶段2-3**
+- 正在修改 `single_image_multi_trajectory_lib.py` 与 `single_image_multi_trajectory.py`.
+
+## [2026-03-22 07:30:30 UTC] 阶段2-3完成, 开始补测试与验证
+
+### 已完成
+- [x] 阶段1: 回读六文件与 OpenSpec 上下文, 锁定实现边界
+- [x] 阶段2: 实现 preset 元数据与 orbit 半径变体
+- [x] 阶段3: 更新选择链路、dry-run / manifest 与 README
+- [ ] 阶段4: 扩展 lib / smoke 测试
+- [ ] 阶段5: 运行聚焦验证并回写日志
+
+### 已落地变更
+- `TrajectoryPreset` 已新增 orbit 半径倍率元数据, canonical preset 已扩展到 8 个.
+- `generate_blender_camera_trajectory()` 已改为按 `preset.kind` 决定 linear / orbit 分发, orbit 变体只缩放半径倍率.
+- `--preset_indices` 已改为跟随 preset 索引集合, 不再硬编码 `range(6)`.
+- README 已把单图批处理说明从 6 个 preset 同步到 8 个.
+
+### 当前动作
+- 扩展 lib 测试, 锁定新 preset 列表、movement distance 和 orbit 半径比例.
+- 扩展 smoke 测试, 锁定 resume、dry-run 默认输出和 subset 选择输出.
+
+### 状态
+**目前在阶段4**
+- 正在修改 `tests/test_single_image_multi_trajectory_lib.py` 与 `tests/test_single_image_multi_trajectory_smoke.py`.
+
+## [2026-03-22 07:31:30 UTC] `add-clockwise-radius-variants` apply 完成
+
+### 已完成
+- [x] 阶段1: 回读六文件与 OpenSpec 上下文, 锁定实现边界
+- [x] 阶段2: 实现 preset 元数据与 orbit 半径变体
+- [x] 阶段3: 更新选择链路、dry-run / manifest 与 README
+- [x] 阶段4: 扩展 lib / smoke 测试
+- [x] 阶段5: 运行聚焦验证并回写日志
+
+### 验证
+- 静态验证:
+  - `python3 -m py_compile inference/single_image_multi_trajectory_lib.py inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 结果: 通过
+- 动态验证:
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 结果: `14 passed in 0.89s`
+
+### 结果
+- OpenSpec `tasks.md` 已全部勾选完成.
+- 新增 preset:
+  - `clockwise_0.65`
+  - `clockwise_1.5`
+- 现有索引 `0..5` 保持不变, 新增索引为 `6` 和 `7`.
+- dry-run、subset 选择、manifest、README 与测试已同步到 8 个 preset.
+
+### 状态
+**任务已完成**
+- 当前 change 已进入“可归档”状态.
+- 如需继续 OpenSpec 流程, 下一步可执行 archive.
+
+## [2026-03-22 08:05:00 UTC] 新需求: 增加 4 个对角线镜头 preset
+
+### 目标
+- 在现有单图多轨迹 preset 体系中新增:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 保持已有 `0..7` 索引稳定, 新动作只追加到列表尾部.
+- 满足用户约束:
+  - `left_down`
+  - `right_down`
+  的向下幅度要明显小于“`up` 的反方向”, 先按一半实现, 避免镜头扎向地面.
+
+### 阶段
+- [ ] 阶段1: 回读现有 preset / 测试 / README, 锁定新增动作的命名和比例
+- [ ] 阶段2: 把 linear 轨迹改造成数据驱动方向向量, 新增 4 个 preset
+- [ ] 阶段3: 同步 README 与测试到新的 preset 集合
+- [ ] 阶段4: 运行聚焦验证并回写日志
+
+### 关键问题
+1. 新动作应如何命名, 才和现有英文 preset 风格一致.
+2. 新动作的 movement distance 应沿用哪一档, 才不会让对角镜头过弱或过强.
+3. “向下只给一半” 应该落在公式哪一层, 才能既可读又容易回归验证.
+
+### 做出的决定
+- 决定: 命名采用 `left_up` / `right_up` / `left_down` / `right_down`.
+  - 理由: 与当前 `left` / `right` / `zoom_in` 的下划线风格一致, 同时贴近用户中文顺序.
+- 决定: 继续保留旧索引稳定, 新动作追加为 `8..11`.
+  - 理由: 这样不会破坏当前已经存在的 `0..7` 语义和 dry-run / subset 用法.
+- 决定: 把 linear 方向抽成 preset 元数据, 不继续增加 `if trajectory_name == ...`.
+  - 理由: 这是当前最值得一起改良的结构点, 以后再加线性动作也只需要加数据.
+
+### 状态
+**目前在阶段1**
+- 正在把新增对角镜头的命名、索引策略和向下半幅规则写入外部记忆.
+
+## [2026-03-22 07:52:36 UTC] 4 个对角线镜头 preset 已完成
+
+### 已完成
+- [x] 阶段1: 回读现有 preset / 测试 / README, 锁定新增动作的命名和比例
+- [x] 阶段2: 把 linear 轨迹改造成数据驱动方向向量, 新增 4 个 preset
+- [x] 阶段3: 同步 README 与测试到新的 preset 集合
+- [x] 阶段4: 运行聚焦验证并回写日志
+
+### 验证
+- 静态验证:
+  - `python3 -m py_compile inference/single_image_multi_trajectory_lib.py inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 结果: 通过
+- 动态验证:
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 第 1 轮现象:
+    - `tests/test_single_image_multi_trajectory_smoke.py::test_resume_smoke_skips_existing_outputs_and_completes` 失败
+  - 第 1 轮原因:
+    - 测试把 manifest 的字符串索引键按字典序排序, 导致 `'10'` 排在 `'2'` 前面
+  - 修正后结果:
+    - `15 passed in 1.15s`
+
+### 结果
+- 默认 preset 集合已从 8 个扩展到 12 个.
+- 新增 preset:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 新索引为:
+  - `8`
+  - `9`
+  - `10`
+  - `11`
+- 向上对角镜头的竖向比例按 `0.6` 落地.
+- 向下对角镜头的竖向比例按 `0.3` 落地, 恰好是向上的一半.
+
+### 状态
+**任务已完成**
+- 代码、README 和聚焦测试已同步完成.
+- 如果下一步还要继续扩充镜头 preset, 当前 linear preset 已经改造成可直接加元数据的结构.

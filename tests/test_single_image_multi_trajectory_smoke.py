@@ -8,6 +8,22 @@ import sys
 import numpy as np
 
 
+EXPECTED_PRESET_NAMES = [
+    "left",
+    "right",
+    "up",
+    "zoom_out",
+    "zoom_in",
+    "clockwise",
+    "clockwise_0.65",
+    "clockwise_1.5",
+    "left_up",
+    "right_up",
+    "left_down",
+    "right_down",
+]
+
+
 def _write_nonempty_file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"x")
@@ -52,7 +68,7 @@ def test_resume_smoke_skips_existing_outputs_and_completes(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    for preset_index in range(6):
+    for preset_index in range(len(EXPECTED_PRESET_NAMES)):
         preset_dir = output_root / str(preset_index)
         render_dir = preset_dir / "rendering_4D_maps"
         generated_dir = preset_dir / "generated_videos"
@@ -82,8 +98,10 @@ def test_resume_smoke_skips_existing_outputs_and_completes(tmp_path: Path) -> No
     manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "completed"
     assert manifest["shared"]["status"] == "completed"
-    for preset_index in range(6):
+    assert sorted(int(index) for index in manifest["trajectories"].keys()) == list(range(len(EXPECTED_PRESET_NAMES)))
+    for preset_index, preset_name in enumerate(EXPECTED_PRESET_NAMES):
         payload = manifest["trajectories"][str(preset_index)]
+        assert payload["name"] == preset_name
         assert payload["status"] == "completed"
         assert payload["generation_status"] == "reused"
         assert payload["render_status"] == "reused"
@@ -116,6 +134,10 @@ def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) ->
     )
 
     assert "--gpu_memory_mode model_cpu_offload_and_qfloat8" in result.stdout
+    assert "- [6] clockwise_0.65" in result.stdout
+    assert "- [7] clockwise_1.5" in result.stdout
+    assert "- [8] left_up" in result.stdout
+    assert "- [11] right_down" in result.stdout
 
 
 def test_camera_only_dry_run_skips_foreground_pipeline(tmp_path: Path) -> None:
@@ -165,8 +187,10 @@ def test_dry_run_can_limit_execution_to_selected_presets(tmp_path: Path) -> None
         "--prompt",
         "test prompt",
         "--preset_indices",
-        "5",
+        "11",
+        "8",
         "0",
+        "7",
         "--dry_run",
     ]
 
@@ -178,8 +202,11 @@ def test_dry_run_can_limit_execution_to_selected_presets(tmp_path: Path) -> None
         text=True,
     )
 
-    assert "selected_preset_indices: [0, 5]" in result.stdout
+    assert "selected_preset_indices: [0, 7, 8, 11]" in result.stdout
     assert "- [0] left" in result.stdout
-    assert "- [5] clockwise" in result.stdout
+    assert "- [7] clockwise_1.5" in result.stdout
+    assert "- [8] left_up" in result.stdout
+    assert "- [11] right_down" in result.stdout
     assert "- [1] right" not in result.stdout
     assert "- [2] up" not in result.stdout
+    assert "- [10] left_down" not in result.stdout

@@ -230,7 +230,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --input_image_path 'demo_data/my4/a.png' \
   --output_root demo_data/my4 \
   --transformer_path model/VerseCrafter \
-  --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持丁达尔效应体积光束,保留好场景的炫光,镜头光晕,辉光,slight camera motion, high detail" \
+  --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持束,保留好场景的体积光 / God rays,光束、光柱,镜头光晕,辉光,slight camera motion, high detail" \
   --negative_prompt "animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
@@ -239,7 +239,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --translation_reference_depth_scale 0.95 \
   --total_movement_distance_factor 1.5 \
   --sample_size "720,1280" \
-  --num_inference_steps 10 \
+  --num_inference_steps 60 \
   --gpu_memory_mode model_cpu_offload \
   --ulysses_degree 2 \
   --ring_degree 1 \
@@ -268,7 +268,7 @@ pixi run torchrun --nproc-per-node=2 inference/versecrafter_inference.py \
   --prompt "A frozen-in-time futuristic AI exhibition hall interior with polished white floors, blue digital wall graphics, a concept vehicle chassis display, a glowing tunnel-like doorway, aerospace exhibits, and crisp architectural lighting. The entire scene is a single perfectly frozen instant. Every screen image, reflection, specular highlight, LED strip, light beam, prop, aircraft model, robot arm, sign, and object remains completely motionless and unchanged for the whole video. No people move. No display content animates. No lighting flicker. No changing reflections. Time is stopped. Only the camera moves through the space. Stable perspective, physically plausible reflections, realistic lens behavior, and consistent illumination." \
   --negative_prompt "animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --input_image_path 'demo_data/my3/generated-image (1).png' \
-  --num_inference_steps 10 \
+  --num_inference_steps 60 \
   --sample_size '720,1280' \
   --ulysses_degree 2 \
   --ring_degree 1 \

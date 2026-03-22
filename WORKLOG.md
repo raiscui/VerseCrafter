@@ -192,3 +192,49 @@
 ### 总结感悟
 - 这类需求如果直接跳到代码实现, 很容易漏掉 README、subset 选择和稳定索引这些“不是公式本身, 但用户会直接碰到”的边界.
 - 先把 capability、设计决策和验证口径写死, 后面真正改代码时会更稳, 也更不容易把原有 `clockwise` 行为改坏.
+
+## [2026-03-22 07:31:30 UTC] 任务名称: 实现 `add-clockwise-radius-variants`
+
+### 任务内容
+- 按 OpenSpec change `add-clockwise-radius-variants` 实现两个新的顺时针 orbit preset:
+  - `clockwise_0.65`
+  - `clockwise_1.5`
+- 保持现有 `clockwise` 的索引、语义和 deterministic movement distance 不变.
+- 同步更新 CLI 选择链路、dry-run / manifest 展示、README 与回归测试.
+
+### 完成过程
+- 先回读六文件与 OpenSpec artifact, 确认这次不是做“自由半径参数”, 而是给现有 deterministic preset 体系补两个具名变体.
+- 在 `inference/single_image_multi_trajectory_lib.py` 中给 `TrajectoryPreset` 增加 `orbit_radius_scale`, 并把 canonical preset 扩展到 8 个.
+- 把 `generate_blender_camera_trajectory()` 从按名字硬编码 `clockwise` 改成按 `preset.kind` 分发, 让 orbit 变体复用同一公式, 只缩放半径倍率.
+- 在 `inference/single_image_multi_trajectory.py` 中让 `--preset_indices` 跟随 `PRESET_INDEX_CHOICES`, 避免 CLI choices 和 preset catalog 再次漂移.
+- 更新 `README.md`, 把单图批处理说明从 6 个 preset 同步到 8 个, 并补充新的 subset 示例.
+- 扩展 `tests/test_single_image_multi_trajectory_lib.py` 与 `tests/test_single_image_multi_trajectory_smoke.py`, 最后跑聚焦测试通过.
+
+### 总结感悟
+- 这次最值钱的改动不是“多了两个名字”, 而是把 orbit 变体真正收进了 preset 元数据, 后面再扩展时不会继续堆特殊分支.
+- 对这类 catalog 驱动的批处理入口, CLI choices 也必须从同一份数据派生. 否则底层已经支持, 入口层仍可能把新能力提前拦死.
+
+## [2026-03-22 07:52:36 UTC] 任务名称: 为单图多轨迹批处理增加 4 个对角线镜头
+
+### 任务内容
+- 在现有 8 个 preset 基础上, 新增:
+  - `left_up`
+  - `right_up`
+  - `left_down`
+  - `right_down`
+- 其中 `left_down/right_down` 的向下幅度显式压到向上的一半, 避免镜头过度钻向地面.
+- 同步更新 README 和聚焦测试.
+
+### 完成过程
+- 先回读现有 preset 结构后, 确认 linear 轨迹仍靠 `if/elif` 按名字硬编码.
+- 决定顺手把 linear 轨迹也改成数据驱动, 在 `TrajectoryPreset` 中加入 `linear_direction_cv`.
+- 以保持旧索引稳定为前提, 将 4 个新动作追加为 `8..11`.
+- 为了兼顾“横向有 left/right 的力度”和“竖向别过猛”, 最终采用:
+  - 向上对角: `y = -0.6`
+  - 向下对角: `y = +0.3`
+- 更新 `README.md`, 把默认批处理说明从 8 个 preset 同步到 12 个, 并写明向下对角动作的竖向幅度被刻意压低.
+- 扩展 lib / smoke 测试, 再跑聚焦验证.
+
+### 总结感悟
+- 这次真正有价值的地方, 不是单独多出 4 个名字, 而是把 linear preset 的“方向”也抽成了元数据.
+- 这样以后继续扩展平移镜头时, 大概率只需要再加一条 preset 数据和一条测试, 不需要回到公式分支里拆墙补洞.

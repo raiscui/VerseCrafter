@@ -19,6 +19,7 @@ from single_image_multi_trajectory_lib import (
     DEFAULT_NUM_FRAMES,
     DEFAULT_RADIUS_X_FACTOR,
     DEFAULT_RADIUS_Y_FACTOR,
+    PRESET_INDEX_CHOICES,
     build_empty_gaussian_params_payload,
     convert_static_gaussian_json_to_trajectory,
     ensure_parent_dir,
@@ -969,9 +970,9 @@ def create_parser() -> argparse.ArgumentParser:
         "--preset_indices",
         type=int,
         nargs="+",
-        choices=range(6),
+        choices=PRESET_INDEX_CHOICES,
         default=None,
-        help="Optional subset of preset indices to run, for example: --preset_indices 0 5",
+        help="Optional subset of preset indices to run, for example: --preset_indices 0 5 6 7",
     )
     parser.add_argument("--num_inference_steps", type=int, default=30, help="VerseCrafter sampling steps")
     parser.add_argument("--ulysses_degree", type=int, default=1, help="VerseCrafter ulysses degree")
@@ -1043,7 +1044,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--radius_x_factor", type=float, default=DEFAULT_RADIUS_X_FACTOR, help="Orbit X radius factor")
     parser.add_argument("--radius_y_factor", type=float, default=DEFAULT_RADIUS_Y_FACTOR, help="Orbit Z radius factor after coordinate conversion")
-    parser.add_argument("--num_circles", type=int, default=DEFAULT_NUM_CIRCLES, help="Orbit circle count for clockwise preset")
+    parser.add_argument("--num_circles", type=int, default=DEFAULT_NUM_CIRCLES, help="Orbit circle count for the clockwise preset family")
     parser.add_argument("--num_frames", type=int, default=DEFAULT_NUM_FRAMES, help="Frame count for generated trajectories")
 
     parser.add_argument(

@@ -40,6 +40,8 @@ DEFAULT_FRAME_STEP = 1
 DEFAULT_RADIUS_X_FACTOR = 0.15
 DEFAULT_RADIUS_Y_FACTOR = 0.10
 DEFAULT_NUM_CIRCLES = 2
+LINEAR_DIAGONAL_UP_VERTICAL_SCALE = 0.6
+LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = LINEAR_DIAGONAL_UP_VERTICAL_SCALE / 2.0
 
 
 # ============================================================================
@@ -53,18 +55,51 @@ class TrajectoryPreset:
     name: str
     movement_distance_range: tuple[float, float]
     kind: str
+    linear_direction_cv: tuple[float, float, float] | None = None
+    orbit_radius_scale: float = 1.0
 
 
 TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
-    TrajectoryPreset(0, "left", (0.2, 0.3), "linear"),
-    TrajectoryPreset(1, "right", (0.2, 0.3), "linear"),
-    TrajectoryPreset(2, "up", (0.1, 0.2), "linear"),
-    TrajectoryPreset(3, "zoom_out", (0.3, 0.4), "linear"),
-    TrajectoryPreset(4, "zoom_in", (0.3, 0.4), "linear"),
-    TrajectoryPreset(5, "clockwise", (0.4, 0.6), "orbit"),
+    TrajectoryPreset(0, "left", (0.2, 0.3), "linear", linear_direction_cv=(-1.0, 0.0, 0.0)),
+    TrajectoryPreset(1, "right", (0.2, 0.3), "linear", linear_direction_cv=(1.0, 0.0, 0.0)),
+    TrajectoryPreset(2, "up", (0.1, 0.2), "linear", linear_direction_cv=(0.0, -1.0, 0.0)),
+    TrajectoryPreset(3, "zoom_out", (0.3, 0.4), "linear", linear_direction_cv=(0.0, 0.0, -1.0)),
+    TrajectoryPreset(4, "zoom_in", (0.3, 0.4), "linear", linear_direction_cv=(0.0, 0.0, 1.0)),
+    TrajectoryPreset(5, "clockwise", (0.4, 0.6), "orbit", orbit_radius_scale=1.0),
+    TrajectoryPreset(6, "clockwise_0.65", (0.4, 0.6), "orbit", orbit_radius_scale=0.65),
+    TrajectoryPreset(7, "clockwise_1.5", (0.4, 0.6), "orbit", orbit_radius_scale=1.5),
+    TrajectoryPreset(
+        8,
+        "left_up",
+        (0.2, 0.3),
+        "linear",
+        linear_direction_cv=(-1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
+    ),
+    TrajectoryPreset(
+        9,
+        "right_up",
+        (0.2, 0.3),
+        "linear",
+        linear_direction_cv=(1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
+    ),
+    TrajectoryPreset(
+        10,
+        "left_down",
+        (0.2, 0.3),
+        "linear",
+        linear_direction_cv=(-1.0, LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE, 0.0),
+    ),
+    TrajectoryPreset(
+        11,
+        "right_down",
+        (0.2, 0.3),
+        "linear",
+        linear_direction_cv=(1.0, LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE, 0.0),
+    ),
 )
 
 TRAJECTORY_PRESET_BY_NAME = {preset.name: preset for preset in TRAJECTORY_PRESETS}
+PRESET_INDEX_CHOICES = tuple(preset.index for preset in TRAJECTORY_PRESETS)
 
 
 # ============================================================================
@@ -127,7 +162,7 @@ def compute_movement_distance(distance_range: tuple[float, float], total_factor:
 
 
 def get_preset_run_specs(total_movement_distance_factor: float) -> list[dict[str, Any]]:
-    """返回带最终距离的 6 条 preset 运行规格."""
+    """返回带最终距离的 canonical preset 运行规格."""
 
     specs: list[dict[str, Any]] = []
     for preset in TRAJECTORY_PRESETS:
@@ -153,7 +188,7 @@ def select_preset_run_specs(
     """按固定 canonical 顺序筛选要执行的 preset.
 
     这里故意不按用户输入顺序执行.
-    原因是目录编号和 manifest 都已经绑定了固定的 0..5 语义,
+    原因是目录编号和 manifest 都已经绑定了固定的 canonical 索引语义,
     因此筛选后仍按自然编号顺序运行更稳定.
     """
 
@@ -264,31 +299,21 @@ def cv_covariance_to_blender(covariance: np.ndarray | list[list[float]]) -> np.n
 # 相机轨迹生成
 # ============================================================================
 def _generate_linear_offsets_cv(
-    trajectory_name: str,
     *,
+    direction_cv: tuple[float, float, float],
     movement_distance: float,
     translation_reference_depth: float,
     num_frames: int,
 ) -> np.ndarray:
     """按 Lyra 的线性轨迹公式生成 OpenCV 位移序列."""
 
+    direction = np.asarray(direction_cv, dtype=np.float32).reshape(3)
     offsets: list[np.ndarray] = []
     for frame_index in range(num_frames):
         scalar = frame_index * movement_distance * translation_reference_depth / float(num_frames)
-
-        if trajectory_name == "left":
-            offset_cv = np.array([-scalar, 0.0, 0.0], dtype=np.float32)
-        elif trajectory_name == "right":
-            offset_cv = np.array([scalar, 0.0, 0.0], dtype=np.float32)
-        elif trajectory_name == "up":
-            offset_cv = np.array([0.0, -scalar, 0.0], dtype=np.float32)
-        elif trajectory_name == "zoom_out":
-            offset_cv = np.array([0.0, 0.0, -scalar], dtype=np.float32)
-        elif trajectory_name == "zoom_in":
-            offset_cv = np.array([0.0, 0.0, scalar], dtype=np.float32)
-        else:
-            raise ValueError(f"Unsupported linear trajectory: {trajectory_name}")
-
+        # 线性 preset 的差异全部收进方向向量.
+        # 这样新增平移动作时, 不需要继续扩展名字分支.
+        offset_cv = direction * scalar
         offsets.append(offset_cv)
 
     return np.stack(offsets, axis=0)
@@ -396,22 +421,30 @@ def generate_blender_camera_trajectory(
     if num_frames <= 0:
         raise ValueError(f"num_frames must be positive, got {num_frames}")
 
-    if trajectory_name == "clockwise":
+    preset = TRAJECTORY_PRESET_BY_NAME[trajectory_name]
+
+    # 所有 orbit 变体都复用同一条 `clockwise` 轨迹公式.
+    # 差异只体现在半径倍率, 这样以后继续追加 orbit 档位时仍然只需要加数据.
+    if preset.kind == "orbit":
         offsets_cv = _generate_clockwise_offsets_cv(
             movement_distance=movement_distance,
             translation_reference_depth=translation_reference_depth,
             num_frames=num_frames,
-            radius_x_factor=radius_x_factor,
-            radius_y_factor=radius_y_factor,
+            radius_x_factor=radius_x_factor * preset.orbit_radius_scale,
+            radius_y_factor=radius_y_factor * preset.orbit_radius_scale,
             num_circles=num_circles,
         )
-    else:
+    elif preset.kind == "linear":
+        if preset.linear_direction_cv is None:
+            raise ValueError(f"Linear trajectory preset is missing direction metadata: {trajectory_name}")
         offsets_cv = _generate_linear_offsets_cv(
-            trajectory_name,
+            direction_cv=preset.linear_direction_cv,
             movement_distance=movement_distance,
             translation_reference_depth=translation_reference_depth,
             num_frames=num_frames,
         )
+    else:
+        raise ValueError(f"Unsupported trajectory kind: {preset.kind}")
 
     offsets_blender = offsets_cv @ COORD_TRANSFORM_CV2BLENDER.T
     target_blender = BLENDER_FORWARD_TARGET_UNIT * float(center_depth)

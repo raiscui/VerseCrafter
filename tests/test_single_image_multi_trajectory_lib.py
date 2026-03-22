@@ -27,20 +27,26 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
         "zoom_out",
         "zoom_in",
         "clockwise",
+        "clockwise_0.65",
+        "clockwise_1.5",
+        "left_up",
+        "right_up",
+        "left_down",
+        "right_down",
     ]
     assert np.allclose(
         [spec["movement_distance"] for spec in specs],
-        [0.375, 0.375, 0.225, 0.525, 0.525, 0.75],
+        [0.375, 0.375, 0.225, 0.525, 0.525, 0.75, 0.75, 0.75, 0.375, 0.375, 0.375, 0.375],
     )
 
 
 def test_select_preset_run_specs_normalizes_to_canonical_order() -> None:
     specs = get_preset_run_specs(1.5)
 
-    selected = select_preset_run_specs(specs, [5, 0, 3])
+    selected = select_preset_run_specs(specs, [11, 8, 7, 0])
 
-    assert [spec["index"] for spec in selected] == [0, 3, 5]
-    assert [spec["name"] for spec in selected] == ["left", "zoom_out", "clockwise"]
+    assert [spec["index"] for spec in selected] == [0, 7, 8, 11]
+    assert [spec["name"] for spec in selected] == ["left", "clockwise_1.5", "left_up", "right_down"]
 
 
 def test_select_preset_run_specs_rejects_duplicate_indices() -> None:
@@ -118,6 +124,83 @@ def test_clockwise_trajectory_orbits_in_blender_xz_plane() -> None:
     assert np.allclose(translations[:, 1], 0.0, atol=1e-6)
     assert np.allclose(translations[0], translations[-1], atol=1e-6)
     assert np.max(np.abs(translations[:, 2])) > 0.0
+
+
+def test_clockwise_radius_variants_scale_translation_only() -> None:
+    common_kwargs = {
+        "movement_distance": 0.75,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+    }
+
+    baseline = generate_blender_camera_trajectory("clockwise", **common_kwargs)
+    smaller = generate_blender_camera_trajectory("clockwise_0.65", **common_kwargs)
+    larger = generate_blender_camera_trajectory("clockwise_1.5", **common_kwargs)
+
+    baseline_translations = baseline[:, :3, 3]
+    smaller_translations = smaller[:, :3, 3]
+    larger_translations = larger[:, :3, 3]
+
+    assert np.allclose(smaller_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(larger_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(smaller_translations, baseline_translations * 0.65, atol=1e-6)
+    assert np.allclose(larger_translations, baseline_translations * 1.5, atol=1e-6)
+    assert np.isclose(
+        np.max(np.linalg.norm(smaller_translations, axis=1)),
+        np.max(np.linalg.norm(baseline_translations, axis=1)) * 0.65,
+        atol=1e-6,
+    )
+    assert np.isclose(
+        np.max(np.linalg.norm(larger_translations, axis=1)),
+        np.max(np.linalg.norm(baseline_translations, axis=1)) * 1.5,
+        atol=1e-6,
+    )
+
+
+def test_diagonal_linear_variants_preserve_horizontal_and_vertical_scales() -> None:
+    common_kwargs = {
+        "movement_distance": 0.5,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+    }
+
+    left = generate_blender_camera_trajectory("left", **common_kwargs)
+    right = generate_blender_camera_trajectory("right", **common_kwargs)
+    up = generate_blender_camera_trajectory("up", **common_kwargs)
+    left_up = generate_blender_camera_trajectory("left_up", **common_kwargs)
+    right_up = generate_blender_camera_trajectory("right_up", **common_kwargs)
+    left_down = generate_blender_camera_trajectory("left_down", **common_kwargs)
+    right_down = generate_blender_camera_trajectory("right_down", **common_kwargs)
+
+    left_translations = left[:, :3, 3]
+    right_translations = right[:, :3, 3]
+    up_translations = up[:, :3, 3]
+    left_up_translations = left_up[:, :3, 3]
+    right_up_translations = right_up[:, :3, 3]
+    left_down_translations = left_down[:, :3, 3]
+    right_down_translations = right_down[:, :3, 3]
+
+    assert np.allclose(left_up_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(right_up_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(left_down_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(right_down_translations[:, 1], 0.0, atol=1e-6)
+
+    assert np.allclose(left_up_translations[:, 0], left_translations[:, 0], atol=1e-6)
+    assert np.allclose(right_up_translations[:, 0], right_translations[:, 0], atol=1e-6)
+    assert np.allclose(left_down_translations[:, 0], left_translations[:, 0], atol=1e-6)
+    assert np.allclose(right_down_translations[:, 0], right_translations[:, 0], atol=1e-6)
+
+    assert np.allclose(left_up_translations[:, 2], up_translations[:, 2] * 0.6, atol=1e-6)
+    assert np.allclose(right_up_translations[:, 2], up_translations[:, 2] * 0.6, atol=1e-6)
+    assert np.allclose(left_down_translations[:, 2], -up_translations[:, 2] * 0.3, atol=1e-6)
+    assert np.allclose(right_down_translations[:, 2], -up_translations[:, 2] * 0.3, atol=1e-6)
+
+    assert left_up_translations[-1, 2] > 0.0
+    assert right_up_translations[-1, 2] > 0.0
+    assert left_down_translations[-1, 2] < 0.0
+    assert right_down_translations[-1, 2] < 0.0
 
 
 def test_convert_static_gaussian_json_to_trajectory_repeats_frames_and_transforms_coords(tmp_path: Path) -> None:

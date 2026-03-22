@@ -130,3 +130,28 @@
   - 现在会在 `set_multi_gpus_devices` 直接报 `Distributed CUDA preflight failed: torchrun requested 2 local workers, but this process only sees 1 CUDA device(s).`
 - `./.pixi/envs/default/bin/python -m py_compile inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_cuda_preflight.py third_party/VideoX-Fun/videox_fun/dist/fuser.py`
   - 结果: 通过
+
+## [2026-03-22 07:52:36 UTC] 问题: manifest 轨迹索引键在测试里按字符串排序会误判 `10` / `11`
+
+### 问题现象
+- 在为对角线 preset 扩展 smoke test 后, `tests/test_single_image_multi_trajectory_smoke.py` 首轮失败.
+- 失败位置是:
+  - `sorted(manifest["trajectories"].keys())`
+- 现象表现为:
+  - `'10'` 会排在 `'2'` 前面
+  - 导致测试误以为 manifest 轨迹目录顺序不对
+
+### 原因
+- manifest 的 `trajectories` 键是字符串, 不是整数.
+- Python 对字符串做默认排序时, 采用字典序而不是数值序.
+
+### 修复
+- 把测试断言改成:
+  - 先把键转成 `int`
+  - 再和 `range(len(EXPECTED_PRESET_NAMES))` 做比较
+
+### 验证
+- 修正后再次运行:
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+- 结果:
+  - `15 passed in 1.15s`

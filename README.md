@@ -298,9 +298,9 @@ torchrun --nproc-per-node=8 inference/versecrafter_inference.py \
 
 ![Generated Video](asset/generated_video_0.gif)
 
-### Single-image 6-trajectory batch workflow (without manual Blender editing)
+### Single-image 12-trajectory batch workflow (without manual Blender editing)
 
-If you want to generate six fixed camera-motion videos from the same input image, you can now use the new VerseCrafter batch entrypoint directly. This workflow reuses depth, segmentation, and 3D Gaussian fitting once, then generates six deterministic presets: `left`, `right`, `up`, `zoom_out`, `zoom_in`, and `clockwise`.
+If you want to generate twelve fixed camera-motion videos from the same input image, you can now use the new VerseCrafter batch entrypoint directly. This workflow reuses depth, segmentation, and 3D Gaussian fitting once, then generates twelve deterministic presets: `left`, `right`, `up`, `zoom_out`, `zoom_in`, `clockwise`, `clockwise_0.65`, `clockwise_1.5`, `left_up`, `right_up`, `left_down`, and `right_down`.
 
 ```bash
 python inference/single_image_multi_trajectory.py \
@@ -335,6 +335,12 @@ $OUTPUT_ROOT/
   3/
   4/
   5/
+  6/
+  7/
+  8/
+  9/
+  10/
+  11/
 ```
 
 Each numeric directory contains:
@@ -343,7 +349,7 @@ Each numeric directory contains:
 - `rendering_4D_maps/`
 - `generated_videos/generated_video_0.mp4`
 
-If you only want to validate one or a few presets first, you can limit the batch with `--preset_indices`. For example, `--preset_indices 0` runs only the `left` preset while keeping the same shared preprocessing workflow.
+If you only want to validate one or a few presets first, you can limit the batch with `--preset_indices`. For example, `--preset_indices 0 8 9 10 11` runs only `left`, `left_up`, `right_up`, `left_down`, and `right_down` while keeping the same shared preprocessing workflow. The script always normalizes the execution order back to the canonical preset order. The two downward diagonal presets intentionally use only half of the upward vertical amplitude so the camera is less likely to dive into the ground plane.
 
 If you want **camera motion only** and do **not** want people / cars to become independent moving foreground objects, add:
 
