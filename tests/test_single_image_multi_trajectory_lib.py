@@ -7,6 +7,7 @@ import numpy as np
 
 from inference.single_image_multi_trajectory_lib import (
     COORD_TRANSFORM_CV2BLENDER,
+    build_generation_prompt,
     build_empty_gaussian_params_payload,
     convert_static_gaussian_json_to_trajectory,
     estimate_center_depth,
@@ -37,6 +38,19 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
     assert np.allclose(
         [spec["movement_distance"] for spec in specs],
         [0.375, 0.375, 0.225, 0.525, 0.525, 0.75, 0.75, 0.75, 0.375, 0.375, 0.375, 0.375],
+    )
+    assert specs[0]["camera_motion_prompt"] == "Camera is moving to the left"
+    assert specs[11]["camera_motion_prompt"] == "Camera is moving to the right and slightly downward"
+
+
+def test_build_generation_prompt_appends_camera_motion_as_sentence() -> None:
+    assert (
+        build_generation_prompt("A cat is sitting on a chair", "Camera is moving to the left")
+        == "A cat is sitting on a chair. Camera is moving to the left."
+    )
+    assert (
+        build_generation_prompt("A cat is sitting on a chair.", "Camera is moving to the left")
+        == "A cat is sitting on a chair. Camera is moving to the left."
     )
 
 

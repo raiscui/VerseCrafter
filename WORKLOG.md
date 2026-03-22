@@ -238,3 +238,22 @@
 ### 总结感悟
 - 这次真正有价值的地方, 不是单独多出 4 个名字, 而是把 linear preset 的“方向”也抽成了元数据.
 - 这样以后继续扩展平移镜头时, 大概率只需要再加一条 preset 数据和一条测试, 不需要回到公式分支里拆墙补洞.
+
+## [2026-03-22 09:05:54 UTC] 任务名称: 为每个 preset 自动补充镜头描述 prompt
+
+### 任务内容
+- 修改 `single_image_multi_trajectory` 的 Step 6 prompt 构造逻辑.
+- 让每个 preset 在真正生成视频时, 自动把对应镜头动作描述拼到原始 prompt 后面.
+- 同步让 manifest、dry-run 和 README 也反映这一行为.
+
+### 完成过程
+- 先回读 `build_generation_command()`、dry-run 输出和 manifest 构造逻辑, 确认当前所有地方都还只看裸 `args.prompt`.
+- 在 `TrajectoryPreset` 中加入 `camera_motion_prompt`, 把镜头描述继续收进同一份 preset catalog.
+- 增加 `build_generation_prompt()` helper, 统一负责把原 prompt 和镜头动作句子拼成最终 prompt.
+- 在 `build_manifest()` 中为每条轨迹记录 `camera_motion_prompt` 和 `generation_prompt`.
+- 在 dry-run 中额外打印 `generation_prompt`, 并让实际 Step 6 命令改用增强后的 prompt.
+- 扩展 lib / smoke 测试, 锁定 prompt 拼接规则、manifest 字段和 dry-run 命令输出.
+
+### 总结感悟
+- 这次最关键的不是字符串拼接本身, 而是把“镜头文本语义”也纳入 preset 元数据, 让几何和文案继续共用一份真相源.
+- 对这类多阶段脚本, 只改最终命令还不够. dry-run 和 manifest 也要一起显示最终 prompt, 排查时才不会出现“看见的是 A, 真正执行的是 B”.

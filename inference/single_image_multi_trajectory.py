@@ -20,6 +20,7 @@ from single_image_multi_trajectory_lib import (
     DEFAULT_RADIUS_X_FACTOR,
     DEFAULT_RADIUS_Y_FACTOR,
     PRESET_INDEX_CHOICES,
+    build_generation_prompt,
     build_empty_gaussian_params_payload,
     convert_static_gaussian_json_to_trajectory,
     ensure_parent_dir,
@@ -92,6 +93,8 @@ def build_manifest(
         trajectories[index_text] = {
             "index": preset["index"],
             "name": preset["name"],
+            "camera_motion_prompt": preset["camera_motion_prompt"],
+            "generation_prompt": build_generation_prompt(args.prompt, preset["camera_motion_prompt"]),
             "movement_distance_range": preset["movement_distance_range"],
             "movement_distance": preset["movement_distance"],
             "center_depth": None,
@@ -698,9 +701,12 @@ def emit_dry_run_plan(
         existing_video = find_generated_video(generated_videos_dir)
         render_reused = args.resume and is_valid_render_output_dir(rendering_maps_dir)
         generation_reused = args.resume and existing_video is not None
+        generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
 
         print(f"- [{index_text}] {preset['name']}")
         print(f"  movement_distance: {preset['movement_distance']:.6f}")
+        print(f"  camera_motion_prompt: {preset['camera_motion_prompt']}")
+        print(f"  generation_prompt: {generation_prompt}")
         print(f"  preset_dir: {preset_dir}")
         print(f"  trajectory_assets: run -> {preset_dir / 'custom_camera_trajectory.npz'}")
         print(f"  static_gaussian_json: run -> {preset_dir / 'custom_3D_gaussian_trajectory.json'}")
@@ -722,7 +728,7 @@ def emit_dry_run_plan(
             print(f"    existing_video: {existing_video}")
         else:
             print(
-                f"    command: {describe_command(build_generation_command(args, rendering_maps_dir=rendering_maps_dir, save_path=generated_videos_dir))}"
+                f"    command: {describe_command(build_generation_command(args, generation_prompt=generation_prompt, rendering_maps_dir=rendering_maps_dir, save_path=generated_videos_dir))}"
             )
 
     print("")
@@ -860,6 +866,7 @@ def build_render_command(
 def build_generation_command(
     args: argparse.Namespace,
     *,
+    generation_prompt: str,
     rendering_maps_dir: Path,
     save_path: Path,
 ) -> list[str]:
@@ -887,7 +894,7 @@ def build_generation_command(
             "--rendering_maps_path",
             str(rendering_maps_dir),
             "--prompt",
-            args.prompt,
+            generation_prompt,
             "--negative_prompt",
             args.negative_prompt,
             "--input_image_path",
@@ -1254,6 +1261,9 @@ def main() -> None:
             rendering_maps_dir = preset_dir / "rendering_4D_maps"
             generated_videos_dir = preset_dir / "generated_videos"
             trajectory_manifest = manifest["trajectories"][index_text]
+            generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
+            trajectory_manifest["camera_motion_prompt"] = preset["camera_motion_prompt"]
+            trajectory_manifest["generation_prompt"] = generation_prompt
             trajectory_manifest["center_depth"] = center_depth
             trajectory_manifest["translation_reference_depth"] = translation_reference_depth
             save_manifest(manifest_path, manifest)
@@ -1340,6 +1350,7 @@ def main() -> None:
                     run_command(
                         build_generation_command(
                             args,
+                            generation_prompt=generation_prompt,
                             rendering_maps_dir=rendering_maps_dir,
                             save_path=generated_videos_dir,
                         ),

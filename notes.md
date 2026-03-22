@@ -671,3 +671,71 @@
   - 测试把 manifest 字典键 `'0'...'11'` 当字符串排序, 导致 `'10'` / `'11'` 插到了 `'2'` 前面
 - 修正:
   - 改为先转整数再比较排序结果
+
+## [2026-03-22 08:12:00 UTC] 新需求设计草案: 为每个 preset 自动补充镜头 prompt
+
+### 现象
+- `build_generation_command()` 当前直接把 `args.prompt` 原样传给 `inference/versecrafter_inference.py`.
+- 这意味着:
+  - `left`
+  - `right`
+  - `clockwise`
+  - `left_up`
+  等镜头虽然几何轨迹不同, 但文本 prompt 里没有同步提示模型“镜头正在怎么动”.
+- 现有 dry-run 和 manifest 也看不到“每个 preset 最终实际使用的 prompt”.
+
+### 当前假设
+- 主假设:
+  - 最合适的做法是给每个 `TrajectoryPreset` 增加一条英文 `camera_motion_prompt`.
+  - 再用统一 helper 把它追加到用户原始 prompt 后面.
+- 备选解释:
+  - 只在 `build_generation_command()` 临时按名字 if/elif 补字符串.
+- 当前不选备选:
+  - 这样会让 prompt 逻辑脱离 preset catalog.
+  - 后面 README、dry-run、manifest 更难保持一致.
+
+### 注入范围
+- 这次不只改实际命令.
+- 还应该一并让以下内容可见:
+  - manifest 中每个 trajectory 的最终 prompt
+  - dry-run 输出里的 generation prompt
+  - README 里说明“脚本会自动为每个 preset 补镜头描述”
+
+## [2026-03-22 09:05:54 UTC] preset 镜头 prompt 自动注入实施结论
+
+### 静态结果
+- `TrajectoryPreset` 已新增:
+  - `camera_motion_prompt`
+- 每个 preset 现在都有对应英文镜头描述, 例如:
+  - `left` -> `Camera is moving to the left`
+  - `clockwise_1.5` -> `Camera is orbiting clockwise around the scene with a wider radius`
+  - `right_down` -> `Camera is moving to the right and slightly downward`
+- 新增统一 helper:
+  - `build_generation_prompt(base_prompt, camera_motion_prompt)`
+- 拼接规则:
+  - 如果原 prompt 末尾没有句号类标点, 自动补 `. `
+  - 镜头动作句子最终统一以句号结束
+
+### 注入位置
+- manifest 默认结构中, 每条轨迹会保存:
+  - `camera_motion_prompt`
+  - `generation_prompt`
+- dry-run 会打印:
+  - `camera_motion_prompt`
+  - `generation_prompt`
+- `build_generation_command()` 已改为接收 `generation_prompt`, Step 6 真正执行时使用增强后的 prompt
+
+### 动态验证
+- `python3 -m py_compile ...`
+  - 结果: 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 结果: `16 passed in 1.06s`
+
+### 测试锁定点
+- lib 测试新增锁定:
+  - preset specs 自带 `camera_motion_prompt`
+  - `build_generation_prompt()` 会稳定追加镜头动作句子
+- smoke 测试新增锁定:
+  - manifest 里能看到 `generation_prompt`
+  - dry-run 输出能看到 `generation_prompt`
+  - dry-run 输出的 Step 6 命令里 `--prompt` 已经变成增强后的最终 prompt

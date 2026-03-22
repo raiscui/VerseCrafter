@@ -230,7 +230,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --input_image_path 'demo_data/my4/a.png' \
   --output_root demo_data/my4 \
   --transformer_path model/VerseCrafter \
-  --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持束,保留好场景的体积光 / God rays,光束、光柱,镜头光晕,辉光,slight camera motion, high detail" \
+  --prompt "A realistic natural video of the original scene, 新海诚卡通风格,卡通描边,保持束,保留好场景的体积光 / God rays,光束、光柱,镜头光晕,辉光,slight camera motion, high detail." \
   --negative_prompt "animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \

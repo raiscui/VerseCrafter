@@ -55,24 +55,82 @@ class TrajectoryPreset:
     name: str
     movement_distance_range: tuple[float, float]
     kind: str
+    camera_motion_prompt: str
     linear_direction_cv: tuple[float, float, float] | None = None
     orbit_radius_scale: float = 1.0
 
 
 TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
-    TrajectoryPreset(0, "left", (0.2, 0.3), "linear", linear_direction_cv=(-1.0, 0.0, 0.0)),
-    TrajectoryPreset(1, "right", (0.2, 0.3), "linear", linear_direction_cv=(1.0, 0.0, 0.0)),
-    TrajectoryPreset(2, "up", (0.1, 0.2), "linear", linear_direction_cv=(0.0, -1.0, 0.0)),
-    TrajectoryPreset(3, "zoom_out", (0.3, 0.4), "linear", linear_direction_cv=(0.0, 0.0, -1.0)),
-    TrajectoryPreset(4, "zoom_in", (0.3, 0.4), "linear", linear_direction_cv=(0.0, 0.0, 1.0)),
-    TrajectoryPreset(5, "clockwise", (0.4, 0.6), "orbit", orbit_radius_scale=1.0),
-    TrajectoryPreset(6, "clockwise_0.65", (0.4, 0.6), "orbit", orbit_radius_scale=0.65),
-    TrajectoryPreset(7, "clockwise_1.5", (0.4, 0.6), "orbit", orbit_radius_scale=1.5),
+    TrajectoryPreset(
+        0,
+        "left",
+        (0.2, 0.3),
+        "linear",
+        "Camera is moving to the left",
+        linear_direction_cv=(-1.0, 0.0, 0.0),
+    ),
+    TrajectoryPreset(
+        1,
+        "right",
+        (0.2, 0.3),
+        "linear",
+        "Camera is moving to the right",
+        linear_direction_cv=(1.0, 0.0, 0.0),
+    ),
+    TrajectoryPreset(
+        2,
+        "up",
+        (0.1, 0.2),
+        "linear",
+        "Camera is moving upward",
+        linear_direction_cv=(0.0, -1.0, 0.0),
+    ),
+    TrajectoryPreset(
+        3,
+        "zoom_out",
+        (0.3, 0.4),
+        "linear",
+        "Camera is pulling back",
+        linear_direction_cv=(0.0, 0.0, -1.0),
+    ),
+    TrajectoryPreset(
+        4,
+        "zoom_in",
+        (0.3, 0.4),
+        "linear",
+        "Camera is moving forward",
+        linear_direction_cv=(0.0, 0.0, 1.0),
+    ),
+    TrajectoryPreset(
+        5,
+        "clockwise",
+        (0.4, 0.6),
+        "orbit",
+        "Camera is orbiting clockwise around the scene",
+        orbit_radius_scale=1.0,
+    ),
+    TrajectoryPreset(
+        6,
+        "clockwise_0.65",
+        (0.4, 0.6),
+        "orbit",
+        "Camera is orbiting clockwise around the scene with a tighter radius",
+        orbit_radius_scale=0.65,
+    ),
+    TrajectoryPreset(
+        7,
+        "clockwise_1.5",
+        (0.4, 0.6),
+        "orbit",
+        "Camera is orbiting clockwise around the scene with a wider radius",
+        orbit_radius_scale=1.5,
+    ),
     TrajectoryPreset(
         8,
         "left_up",
         (0.2, 0.3),
         "linear",
+        "Camera is moving to the left and upward",
         linear_direction_cv=(-1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
     ),
     TrajectoryPreset(
@@ -80,6 +138,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "right_up",
         (0.2, 0.3),
         "linear",
+        "Camera is moving to the right and upward",
         linear_direction_cv=(1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
     ),
     TrajectoryPreset(
@@ -87,6 +146,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "left_down",
         (0.2, 0.3),
         "linear",
+        "Camera is moving to the left and slightly downward",
         linear_direction_cv=(-1.0, LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE, 0.0),
     ),
     TrajectoryPreset(
@@ -94,6 +154,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "right_down",
         (0.2, 0.3),
         "linear",
+        "Camera is moving to the right and slightly downward",
         linear_direction_cv=(1.0, LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE, 0.0),
     ),
 )
@@ -171,6 +232,7 @@ def get_preset_run_specs(total_movement_distance_factor: float) -> list[dict[str
                 "index": preset.index,
                 "name": preset.name,
                 "kind": preset.kind,
+                "camera_motion_prompt": preset.camera_motion_prompt,
                 "movement_distance_range": list(preset.movement_distance_range),
                 "movement_distance": compute_movement_distance(
                     preset.movement_distance_range,
@@ -207,6 +269,24 @@ def select_preset_run_specs(
             f"preset_indices must be chosen from {available}, got {preset_indices}",
         )
     return selected
+
+
+def build_generation_prompt(base_prompt: str, camera_motion_prompt: str) -> str:
+    """把镜头动作描述稳定追加到用户原始 prompt 后面.
+
+    这里统一收口 prompt 拼接规则,
+    避免 manifest、dry-run 和真正的 Step 6 命令各自拼出不同文本.
+    """
+
+    base_text = base_prompt.strip()
+    motion_text = camera_motion_prompt.strip()
+    if not base_text:
+        return f"{motion_text}."
+
+    separator = " " if base_text.endswith((".", "!", "?", ";", ":")) else ". "
+    if motion_text.endswith((".", "!", "?")):
+        return f"{base_text}{separator}{motion_text}"
+    return f"{base_text}{separator}{motion_text}."
 
 
 # ============================================================================

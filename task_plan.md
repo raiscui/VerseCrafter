@@ -1007,3 +1007,63 @@
 **任务已完成**
 - 代码、README 和聚焦测试已同步完成.
 - 如果下一步还要继续扩充镜头 preset, 当前 linear preset 已经改造成可直接加元数据的结构.
+
+## [2026-03-22 08:12:00 UTC] 新需求: 为每个 preset 自动补充镜头 prompt 描述
+
+### 目标
+- 在 `single_image_multi_trajectory` 的每条轨迹生成阶段, 自动把对应镜头动作描述追加到最终 prompt.
+- 例如:
+  - `left` -> `camera is moving to the left`
+- 保证 dry-run、manifest 和实际 Step 6 命令看到的是同一份“增强后的 prompt”.
+
+### 阶段
+- [ ] 阶段1: 回读生成命令链路与测试, 锁定 prompt 注入点
+- [ ] 阶段2: 为 preset 增加镜头描述元数据, 实现最终 prompt 拼装
+- [ ] 阶段3: 同步 manifest / dry-run / README / 测试
+- [ ] 阶段4: 运行聚焦验证并回写日志
+
+### 关键问题
+1. 镜头描述是只改 Step 6 命令, 还是连 manifest / dry-run 也要一起显式展示.
+2. prompt 拼接规则要不要做成统一 helper, 避免多个位置各自拼接.
+3. 对角线和 orbit 变体的英文描述要如何命名, 才既直白又统一.
+
+### 做出的决定
+- 决定: 把镜头描述直接放进 `TrajectoryPreset` 元数据.
+  - 理由: 这样 prompt 增强和轨迹定义仍然共用同一份 catalog.
+- 决定: 使用统一 helper 构造“原 prompt + 镜头动作句子”.
+  - 理由: 避免 build_manifest、dry-run、Step 6 命令三处出现不同拼法.
+
+### 状态
+**目前在阶段1**
+- 正在回读 `build_generation_command()`、dry-run 输出和 manifest 构建逻辑.
+
+## [2026-03-22 09:05:54 UTC] 每个 preset 自动补充镜头 prompt 描述已完成
+
+### 已完成
+- [x] 阶段1: 回读生成命令链路与测试, 锁定 prompt 注入点
+- [x] 阶段2: 为 preset 增加镜头描述元数据, 实现最终 prompt 拼装
+- [x] 阶段3: 同步 manifest / dry-run / README / 测试
+- [x] 阶段4: 运行聚焦验证并回写日志
+
+### 验证
+- 静态验证:
+  - `python3 -m py_compile inference/single_image_multi_trajectory_lib.py inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 结果: 通过
+- 动态验证:
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
+  - 结果: `16 passed in 1.06s`
+
+### 结果
+- 每个 preset 现在都自带英文镜头描述, 并会自动拼进最终生成 prompt.
+- manifest 中每条轨迹现在都会记录:
+  - `camera_motion_prompt`
+  - `generation_prompt`
+- dry-run 现在会显式打印:
+  - `camera_motion_prompt`
+  - `generation_prompt`
+- Step 6 的 `--prompt` 已改为使用增强后的最终 prompt, 不再直接传裸 `args.prompt`.
+
+### 状态
+**任务已完成**
+- prompt 文本描述和几何轨迹现在已经对齐.
+- 如果后面继续增加新的 preset, 只需要补该 preset 的 `camera_motion_prompt` 元数据和对应测试.

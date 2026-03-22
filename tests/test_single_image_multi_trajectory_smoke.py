@@ -102,10 +102,17 @@ def test_resume_smoke_skips_existing_outputs_and_completes(tmp_path: Path) -> No
     for preset_index, preset_name in enumerate(EXPECTED_PRESET_NAMES):
         payload = manifest["trajectories"][str(preset_index)]
         assert payload["name"] == preset_name
+        assert payload["camera_motion_prompt"]
+        assert payload["generation_prompt"].startswith("test prompt")
         assert payload["status"] == "completed"
         assert payload["generation_status"] == "reused"
         assert payload["render_status"] == "reused"
         assert payload["generated_video_path"].endswith("generated_video_0.mp4")
+    assert manifest["trajectories"]["0"]["generation_prompt"] == "test prompt. Camera is moving to the left."
+    assert (
+        manifest["trajectories"]["10"]["generation_prompt"]
+        == "test prompt. Camera is moving to the left and slightly downward."
+    )
 
 
 def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) -> None:
@@ -138,6 +145,9 @@ def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) ->
     assert "- [7] clockwise_1.5" in result.stdout
     assert "- [8] left_up" in result.stdout
     assert "- [11] right_down" in result.stdout
+    assert "generation_prompt: test prompt. Camera is moving to the left." in result.stdout
+    assert "generation_prompt: test prompt. Camera is moving to the right and slightly downward." in result.stdout
+    assert "--prompt 'test prompt. Camera is moving to the left.'" in result.stdout
 
 
 def test_camera_only_dry_run_skips_foreground_pipeline(tmp_path: Path) -> None:
@@ -207,6 +217,11 @@ def test_dry_run_can_limit_execution_to_selected_presets(tmp_path: Path) -> None
     assert "- [7] clockwise_1.5" in result.stdout
     assert "- [8] left_up" in result.stdout
     assert "- [11] right_down" in result.stdout
+    assert "generation_prompt: test prompt. Camera is moving to the left." in result.stdout
+    assert "generation_prompt: test prompt. Camera is orbiting clockwise around the scene with a wider radius." in result.stdout
+    assert "generation_prompt: test prompt. Camera is moving to the left and upward." in result.stdout
+    assert "generation_prompt: test prompt. Camera is moving to the right and slightly downward." in result.stdout
+    assert "--prompt 'test prompt. Camera is moving to the right and slightly downward.'" in result.stdout
     assert "- [1] right" not in result.stdout
     assert "- [2] up" not in result.stdout
     assert "- [10] left_down" not in result.stdout
