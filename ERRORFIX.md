@@ -1,157 +1,54 @@
 # 错误修复记录
 
-## [2026-03-16 03:31:00 UTC] 问题: `demo_data/my3` 双卡 Step 6 报 `xfuser is not installed`
+## [2026-03-22 12:18:55 UTC] 问题: `demo_data/my4` 已跑到 8 号镜头但只见 1 张 GPU 工作
 
 ### 问题现象
-- `single_image_multi_trajectory.py` 已成功完成深度估计与 4D 控制图渲染.
-- 最终 `torchrun --nproc-per-node=2 inference/versecrafter_inference.py` 失败.
-- 关键报错:
-  - `RuntimeError: xfuser is not installed.`
+- 用户预期当前运行应为双卡.
+- 但在 `nvidia-smi` 中只看到 1 张 GPU 在工作.
 
-### 原因
-- 当前 Pixi 环境缺少 VerseCrafter 多卡运行时依赖:
-  - `xfuser`
-  - `yunchang`
-- 同时, 默认 `moge_version=v2` 会走 `Ruicheng/moge-2-vitl-normal`, 若网络慢或无代理, 会在深度阶段卡住.
+### 原因判断
+- 已验证结论不是“8 号镜头的双卡 Step 6 没有正确调度第二张卡”.
+- 当前真实运行中的 8 号镜头 Step 6 本身就是单卡参数:
+  - `--ulysses_degree 1`
+  - `--ring_degree 1`
+  - `--num_inference_steps 30`
+  - 无 `torchrun`
+- 因此只见 1 张 GPU 工作, 是当前实际运行参数导致的表现.
 
-### 修复
-- 显式指定本地深度模型:
-  - `--moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt`
-- 安装多卡依赖:
-  - `pixi run pip install xfuser==0.4.2 yunchang==0.6.2 --progress-bar off -i https://mirrors.aliyun.com/pypi/simple/`
-- 复用已有 `rendering_4D_maps` 直接重跑 Step 6.
+### 证据
+- 读取 `/proc/84075/cmdline` 与 `/proc/122250/cmdline`.
+- 读取 `demo_data/my4/manifest.json`.
+- 三者都指向单卡配置, 且与用户口头贴出的双卡命令不一致.
 
-### 验证
-- `xfuser` 与 `yunchang` 已可导入.
-- 10 步采样已成功完成.
-- 输出视频:
-  - `demo_data/my3_dual_a800_test_v2/0/generated_videos/generated_video_0.mp4`
-- `ffprobe` 验证结果:
-  - `width=1280`
-  - `height=720`
-  - `nb_frames=81`
-  - `duration=5.0625`
-  - `r_frame_rate=16/1`
+### 修复/处置
+- 本轮未改代码.
+- 先向用户解释: 当前问题更像是命令启动层或运行轮次混淆, 不是代码在 8 号镜头阶段悄悄把双卡降成单卡.
 
-## [2026-03-16 04:17:00 UTC] 经验: `my3` 的步数对比测试不要重跑整链路
+### 后续验证建议
+- 后续若要再次确认双卡是否生效, 应直接观察是否真的启动了:
+  - `torchrun --nproc-per-node=2`
+- 并在启动后立即读取实际父进程和子进程 `argv`, 避免继续把“预期命令”误当成“真实运行命令”.
+
+## [2026-03-22 12:36:50 UTC] 问题: `demo_data/my4` 需要把 8-11 号镜头切回双卡继续跑
 
 ### 问题现象
-- 用户只想看 `num_inference_steps` 从 `10` 提升到 `60` 的结果.
-- 如果直接重跑整条 `single_image_multi_trajectory.py` 链路, 会重复耗费时间在深度估计和 4D 控制图渲染上.
+- 原先那轮运行已经把 0-7 号镜头做完, 但 8-11 号镜头尚未完成.
+- 用户需要继续后半段镜头, 并确保真正使用双卡.
 
-### 原因
-- 对这类“同一输入图、同一轨迹、同一控制图, 仅调整采样步数”的对比任务, 真正变化只发生在 Step 6.
+### 处理方式
+- 不新建 `output_root`, 继续使用 `demo_data/my4`.
+- 借助默认 `resume` 机制, 只重启:
+  - `--preset_indices 8 9 10 11`
+- 并显式传入双卡参数:
+  - `--ulysses_degree 2`
+  - `--ring_degree 1`
+  - `--nproc_per_node 2`
 
-### 修复
-- 复用:
-  - `demo_data/my3_dual_a800_test_v2/0/rendering_4D_maps`
-- 只重跑:
-  - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py ... --num_inference_steps 60`
-- 新结果另存到:
-  - `generated_videos_steps60_compare/`
-
-### 验证
-- 60 步视频已成功生成:
-  - `demo_data/my3_dual_a800_test_v2/0/generated_videos_steps60_compare/generated_video_0.mp4`
-
-## [2026-03-21 13:22:00 UTC] 问题: `my4` 单图多轨迹在 Step 1 前后报 `No CUDA GPUs are available`
-
-### 问题现象
-- `single_image_multi_trajectory.py` 原先会直接执行:
-  - `inference/moge-v2_infer.py ... --device cuda`
-- 实际运行时在 PyTorch CUDA 初始化阶段失败:
-  - `RuntimeError: No CUDA GPUs are available`
-- 即使显式传入 `--moge_pretrained` 与 `--moge_version v2`, 报错也完全不变.
-
-### 原因
-- 物理 GPU 存在, 但当前环境并没有可被 CUDA workload 使用的设备实例.
-- 动态证据:
-  - `nvidia-smi` 能看到 `NVIDIA A800-SXM4-80GB`
-  - `torch.cuda.is_available() == False`
-  - `torch.cuda.device_count() == 1`
-  - `torch.cuda.get_device_name(0)` 报 `No CUDA GPUs are available`
-- 静态 / 外部资料线索:
-  - `nvidia-smi` 显示 `MIG Mode: Enabled`
-  - 同时显示 `No MIG devices found`
-  - NVIDIA MIG User Guide 说明: 没有创建 GPU / Compute instance 时, CUDA workload 不能在该 GPU 上运行.
-
-### 修复
-- 没有把问题掩盖成 CPU fallback.
-- 改为在 `single_image_multi_trajectory.py` 入口增加 CUDA 预检:
-  - 先判断这次运行是否真的需要 CUDA
-  - 如果需要, 就在真正起重流程前探测 Torch CUDA 状态
-  - 探测失败时直接输出清晰报错, 并附带 MIG 提示
-- 同时新增单测覆盖上述逻辑.
-
-### 验证
-- `pixi run pytest tests/test_single_image_multi_trajectory_cuda_preflight.py tests/test_single_image_multi_trajectory_smoke.py -q`
-  - 输出: `7 passed in 0.84s`
-- 真实命令复跑后, 已不再先掉进 `moge-v2_infer.py` 深栈.
-- 新输出会直接说明:
-  - 当前工作流为什么需要 CUDA
-  - Torch 当前看到的 CUDA 状态
-  - `MIG 已启用但没有实例` 的定位提示
-
-## [2026-03-21 16:22:30 UTC] 问题: `my4` Step 6 双进程推理报 `CUDA error: invalid device ordinal`
-
-### 问题现象
-- `single_image_multi_trajectory.py` 在生成阶段调用:
-  - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py ...`
-- 原始失败日志显示:
+### 验证结果
+- `--dry_run` 已显示会走 `torchrun --nproc-per-node=2`.
+- 正式启动后已有:
+  - `torchrun`
+  - 两个 Step 6 worker
   - `rank=0 device=cuda:0`
   - `rank=1 device=cuda:1`
-  - rank1 在 FSDP 初始化阶段报 `RuntimeError: CUDA error: invalid device ordinal`
-
-### 原因
-- 当前机器里的 PyTorch 进程只看见 1 张 CUDA 设备:
-  - `torch.cuda.is_available() == True`
-  - `torch.cuda.device_count() == 1`
-- 但 Step 6 请求了 2 个本地 worker:
-  - `--nproc-per-node=2`
-  - `ulysses_degree * ring_degree = 2`
-- `videox_fun/dist/fuser.py` 会直接用 `local_rank` 选 `cuda:{local_rank}`.
-- 因而 rank1 实际会尝试访问不存在的 `cuda:1`, 最终在更深层触发 `invalid device ordinal`.
-
-### 修复
-- 在 `single_image_multi_trajectory.py` 中新增多卡预检:
-  - 如果本次真的会进入 Step 6 多进程推理, 且 `torch.cuda.device_count() < nproc_per_node`, 就提前报清晰错误.
-- 在 `videox_fun/dist/fuser.py` 中新增本地拓扑校验:
-  - 读取 `LOCAL_RANK` / `LOCAL_WORLD_SIZE`
-  - 校验本地可见 GPU 数是否足够
-  - 显式 `torch.cuda.set_device(local_rank)`
-- 没有做静默单卡降级, 避免悄悄改变用户请求的并行拓扑.
-
-### 验证
-- `./.pixi/envs/default/bin/python -m pytest tests/test_single_image_multi_trajectory_cuda_preflight.py tests/test_single_image_multi_trajectory_smoke.py -q`
-  - 结果: `10 passed in 0.76s`
-- 真实批处理命令复跑:
-  - 现在会在入口直接报 `多卡预检失败`, 并指出 `torch.cuda.device_count(): 1`、`--nproc-per-node: 2`
-- 真实 Step 6 命令复跑:
-  - 现在会在 `set_multi_gpus_devices` 直接报 `Distributed CUDA preflight failed: torchrun requested 2 local workers, but this process only sees 1 CUDA device(s).`
-- `./.pixi/envs/default/bin/python -m py_compile inference/single_image_multi_trajectory.py tests/test_single_image_multi_trajectory_cuda_preflight.py third_party/VideoX-Fun/videox_fun/dist/fuser.py`
-  - 结果: 通过
-
-## [2026-03-22 07:52:36 UTC] 问题: manifest 轨迹索引键在测试里按字符串排序会误判 `10` / `11`
-
-### 问题现象
-- 在为对角线 preset 扩展 smoke test 后, `tests/test_single_image_multi_trajectory_smoke.py` 首轮失败.
-- 失败位置是:
-  - `sorted(manifest["trajectories"].keys())`
-- 现象表现为:
-  - `'10'` 会排在 `'2'` 前面
-  - 导致测试误以为 manifest 轨迹目录顺序不对
-
-### 原因
-- manifest 的 `trajectories` 键是字符串, 不是整数.
-- Python 对字符串做默认排序时, 采用字典序而不是数值序.
-
-### 修复
-- 把测试断言改成:
-  - 先把键转成 `int`
-  - 再和 `range(len(EXPECTED_PRESET_NAMES))` 做比较
-
-### 验证
-- 修正后再次运行:
-  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py -q`
-- 结果:
-  - `15 passed in 1.15s`
+- `nvidia-smi` 也已同时看到两张卡都有占用.

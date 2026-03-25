@@ -58,6 +58,7 @@ class TrajectoryPreset:
     camera_motion_prompt: str
     linear_direction_cv: tuple[float, float, float] | None = None
     orbit_radius_scale: float = 1.0
+    orbit_direction: float = 1.0
 
 
 TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
@@ -108,6 +109,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "orbit",
         "Camera is orbiting clockwise around the scene",
         orbit_radius_scale=1.0,
+        orbit_direction=1.0,
     ),
     TrajectoryPreset(
         6,
@@ -116,14 +118,16 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "orbit",
         "Camera is orbiting clockwise around the scene with a tighter radius",
         orbit_radius_scale=0.65,
+        orbit_direction=1.0,
     ),
     TrajectoryPreset(
         7,
-        "clockwise_1.5",
+        "counterclockwise_1.5",
         (0.4, 0.6),
         "orbit",
-        "Camera is orbiting clockwise around the scene with a wider radius",
+        "Camera is orbiting counterclockwise around the scene with a wider radius",
         orbit_radius_scale=1.5,
+        orbit_direction=-1.0,
     ),
     TrajectoryPreset(
         8,
@@ -399,7 +403,7 @@ def _generate_linear_offsets_cv(
     return np.stack(offsets, axis=0)
 
 
-def _generate_clockwise_offsets_cv(
+def _generate_orbit_offsets_cv(
     *,
     movement_distance: float,
     translation_reference_depth: float,
@@ -407,8 +411,13 @@ def _generate_clockwise_offsets_cv(
     radius_x_factor: float,
     radius_y_factor: float,
     num_circles: int,
+    orbit_direction: float,
 ) -> np.ndarray:
-    """按 Lyra 的 spiral/orbit 公式生成 OpenCV 位移序列."""
+    """按 Lyra 的 spiral/orbit 公式生成 OpenCV 位移序列.
+
+    `orbit_direction` 取 `1.0` 表示顺时针, 取 `-1.0` 表示逆时针.
+    这样 orbit 变体的差异就都能收进 preset 元数据里.
+    """
 
     radius_x = movement_distance * radius_x_factor
     radius_y = movement_distance * radius_y_factor
@@ -419,7 +428,7 @@ def _generate_clockwise_offsets_cv(
         if num_frames == 1:
             theta = 0.0
         else:
-            theta = theta_max * frame_index / float(num_frames - 1)
+            theta = orbit_direction * theta_max * frame_index / float(num_frames - 1)
 
         x_offset = radius_x * (np.cos(theta) - 1.0) * translation_reference_depth
         y_offset = radius_y * np.sin(theta) * translation_reference_depth
@@ -503,16 +512,17 @@ def generate_blender_camera_trajectory(
 
     preset = TRAJECTORY_PRESET_BY_NAME[trajectory_name]
 
-    # 所有 orbit 变体都复用同一条 `clockwise` 轨迹公式.
-    # 差异只体现在半径倍率, 这样以后继续追加 orbit 档位时仍然只需要加数据.
+    # 所有 orbit 变体都复用同一条通用环绕公式.
+    # 差异全部收进 preset 元数据, 包括半径倍率和环绕方向.
     if preset.kind == "orbit":
-        offsets_cv = _generate_clockwise_offsets_cv(
+        offsets_cv = _generate_orbit_offsets_cv(
             movement_distance=movement_distance,
             translation_reference_depth=translation_reference_depth,
             num_frames=num_frames,
             radius_x_factor=radius_x_factor * preset.orbit_radius_scale,
             radius_y_factor=radius_y_factor * preset.orbit_radius_scale,
             num_circles=num_circles,
+            orbit_direction=preset.orbit_direction,
         )
     elif preset.kind == "linear":
         if preset.linear_direction_cv is None:

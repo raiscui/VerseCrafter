@@ -29,7 +29,7 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
         "zoom_in",
         "clockwise",
         "clockwise_0.65",
-        "clockwise_1.5",
+        "counterclockwise_1.5",
         "left_up",
         "right_up",
         "left_down",
@@ -40,6 +40,7 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
         [0.375, 0.375, 0.225, 0.525, 0.525, 0.75, 0.75, 0.75, 0.375, 0.375, 0.375, 0.375],
     )
     assert specs[0]["camera_motion_prompt"] == "Camera is moving to the left"
+    assert specs[7]["camera_motion_prompt"] == "Camera is orbiting counterclockwise around the scene with a wider radius"
     assert specs[11]["camera_motion_prompt"] == "Camera is moving to the right and slightly downward"
 
 
@@ -60,7 +61,7 @@ def test_select_preset_run_specs_normalizes_to_canonical_order() -> None:
     selected = select_preset_run_specs(specs, [11, 8, 7, 0])
 
     assert [spec["index"] for spec in selected] == [0, 7, 8, 11]
-    assert [spec["name"] for spec in selected] == ["left", "clockwise_1.5", "left_up", "right_down"]
+    assert [spec["name"] for spec in selected] == ["left", "counterclockwise_1.5", "left_up", "right_down"]
 
 
 def test_select_preset_run_specs_rejects_duplicate_indices() -> None:
@@ -140,36 +141,48 @@ def test_clockwise_trajectory_orbits_in_blender_xz_plane() -> None:
     assert np.max(np.abs(translations[:, 2])) > 0.0
 
 
-def test_clockwise_radius_variants_scale_translation_only() -> None:
+def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     common_kwargs = {
         "movement_distance": 0.75,
         "center_depth": 2.5,
         "translation_reference_depth": 1.0,
         "num_frames": 9,
+        "num_circles": 1,
     }
 
     baseline = generate_blender_camera_trajectory("clockwise", **common_kwargs)
     smaller = generate_blender_camera_trajectory("clockwise_0.65", **common_kwargs)
-    larger = generate_blender_camera_trajectory("clockwise_1.5", **common_kwargs)
+    wider_counterclockwise = generate_blender_camera_trajectory("counterclockwise_1.5", **common_kwargs)
 
     baseline_translations = baseline[:, :3, 3]
     smaller_translations = smaller[:, :3, 3]
-    larger_translations = larger[:, :3, 3]
+    wider_counterclockwise_translations = wider_counterclockwise[:, :3, 3]
 
     assert np.allclose(smaller_translations[:, 1], 0.0, atol=1e-6)
-    assert np.allclose(larger_translations[:, 1], 0.0, atol=1e-6)
+    assert np.allclose(wider_counterclockwise_translations[:, 1], 0.0, atol=1e-6)
     assert np.allclose(smaller_translations, baseline_translations * 0.65, atol=1e-6)
-    assert np.allclose(larger_translations, baseline_translations * 1.5, atol=1e-6)
+    assert np.allclose(
+        wider_counterclockwise_translations[:, 0],
+        baseline_translations[:, 0] * 1.5,
+        atol=1e-6,
+    )
+    assert np.allclose(
+        wider_counterclockwise_translations[:, 2],
+        -baseline_translations[:, 2] * 1.5,
+        atol=1e-6,
+    )
     assert np.isclose(
         np.max(np.linalg.norm(smaller_translations, axis=1)),
         np.max(np.linalg.norm(baseline_translations, axis=1)) * 0.65,
         atol=1e-6,
     )
     assert np.isclose(
-        np.max(np.linalg.norm(larger_translations, axis=1)),
+        np.max(np.linalg.norm(wider_counterclockwise_translations, axis=1)),
         np.max(np.linalg.norm(baseline_translations, axis=1)) * 1.5,
         atol=1e-6,
     )
+    assert baseline_translations[1, 2] < 0.0
+    assert wider_counterclockwise_translations[1, 2] > 0.0
 
 
 def test_diagonal_linear_variants_preserve_horizontal_and_vertical_scales() -> None:

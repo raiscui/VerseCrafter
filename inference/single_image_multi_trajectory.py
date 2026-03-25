@@ -1051,7 +1051,7 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--radius_x_factor", type=float, default=DEFAULT_RADIUS_X_FACTOR, help="Orbit X radius factor")
     parser.add_argument("--radius_y_factor", type=float, default=DEFAULT_RADIUS_Y_FACTOR, help="Orbit Z radius factor after coordinate conversion")
-    parser.add_argument("--num_circles", type=int, default=DEFAULT_NUM_CIRCLES, help="Orbit circle count for the clockwise preset family")
+    parser.add_argument("--num_circles", type=int, default=DEFAULT_NUM_CIRCLES, help="Orbit circle count for the orbit preset family")
     parser.add_argument("--num_frames", type=int, default=DEFAULT_NUM_FRAMES, help="Frame count for generated trajectories")
 
     parser.add_argument(

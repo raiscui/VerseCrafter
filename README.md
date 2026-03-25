@@ -300,7 +300,7 @@ torchrun --nproc-per-node=8 inference/versecrafter_inference.py \
 
 ### Single-image 12-trajectory batch workflow (without manual Blender editing)
 
-If you want to generate twelve fixed camera-motion videos from the same input image, you can now use the new VerseCrafter batch entrypoint directly. This workflow reuses depth, segmentation, and 3D Gaussian fitting once, then generates twelve deterministic presets: `left`, `right`, `up`, `zoom_out`, `zoom_in`, `clockwise`, `clockwise_0.65`, `clockwise_1.5`, `left_up`, `right_up`, `left_down`, and `right_down`.
+If you want to generate twelve fixed camera-motion videos from the same input image, you can now use the new VerseCrafter batch entrypoint directly. This workflow reuses depth, segmentation, and 3D Gaussian fitting once, then generates twelve deterministic presets: `left`, `right`, `up`, `zoom_out`, `zoom_in`, `clockwise`, `clockwise_0.65`, `counterclockwise_1.5`, `left_up`, `right_up`, `left_down`, and `right_down`.
 
 For each preset, the script also appends a preset-specific camera-motion sentence to the final generation prompt. For example, the `left` preset appends `Camera is moving to the left.` automatically, so the text prompt and the geometric trajectory stay aligned.
 

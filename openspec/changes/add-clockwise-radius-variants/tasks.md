@@ -1,7 +1,7 @@
 ## 1. Preset catalog and orbit generation
 
-- [x] 1.1 扩展 `TrajectoryPreset` 元数据与 preset 列表, 新增 `clockwise_0.65` 和 `clockwise_1.5`, 并保持现有 `0..5` 索引不变.
-- [x] 1.2 调整 orbit 轨迹生成逻辑, 让两个新 preset 复用现有 `clockwise` 语义, 仅按 `0.65` 和 `1.5` 缩放 orbit 半径.
+- [x] 1.1 扩展 `TrajectoryPreset` 元数据与 preset 列表, 新增 `clockwise_0.65` 和 `counterclockwise_1.5`, 并保持现有 `0..5` 索引不变.
+- [x] 1.2 调整 orbit 轨迹生成逻辑, 让新 preset 复用现有 orbit 公式, 同时按元数据控制半径倍率与顺/逆时针方向.
 
 ## 2. User-facing preset surfaces
 
@@ -10,6 +10,6 @@
 
 ## 3. Verification
 
-- [x] 3.1 扩展 `tests/test_single_image_multi_trajectory_lib.py`, 覆盖新的 preset 目录顺序、deterministic movement distance 与 orbit 半径比例关系.
+- [x] 3.1 扩展 `tests/test_single_image_multi_trajectory_lib.py`, 覆盖新的 preset 目录顺序、deterministic movement distance 与 orbit 半径 / 方向关系.
 - [x] 3.2 扩展 `tests/test_single_image_multi_trajectory_smoke.py`, 覆盖新 preset 的 subset 选择与 dry-run 输出.
 - [x] 3.3 运行聚焦测试, 验证 `test_single_image_multi_trajectory_lib.py` 和 `test_single_image_multi_trajectory_smoke.py` 通过.

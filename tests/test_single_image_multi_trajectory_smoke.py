@@ -16,7 +16,7 @@ EXPECTED_PRESET_NAMES = [
     "zoom_in",
     "clockwise",
     "clockwise_0.65",
-    "clockwise_1.5",
+    "counterclockwise_1.5",
     "left_up",
     "right_up",
     "left_down",
@@ -142,7 +142,7 @@ def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) ->
 
     assert "--gpu_memory_mode model_cpu_offload_and_qfloat8" in result.stdout
     assert "- [6] clockwise_0.65" in result.stdout
-    assert "- [7] clockwise_1.5" in result.stdout
+    assert "- [7] counterclockwise_1.5" in result.stdout
     assert "- [8] left_up" in result.stdout
     assert "- [11] right_down" in result.stdout
     assert "generation_prompt: test prompt. Camera is moving to the left." in result.stdout
@@ -214,11 +214,11 @@ def test_dry_run_can_limit_execution_to_selected_presets(tmp_path: Path) -> None
 
     assert "selected_preset_indices: [0, 7, 8, 11]" in result.stdout
     assert "- [0] left" in result.stdout
-    assert "- [7] clockwise_1.5" in result.stdout
+    assert "- [7] counterclockwise_1.5" in result.stdout
     assert "- [8] left_up" in result.stdout
     assert "- [11] right_down" in result.stdout
     assert "generation_prompt: test prompt. Camera is moving to the left." in result.stdout
-    assert "generation_prompt: test prompt. Camera is orbiting clockwise around the scene with a wider radius." in result.stdout
+    assert "generation_prompt: test prompt. Camera is orbiting counterclockwise around the scene with a wider radius." in result.stdout
     assert "generation_prompt: test prompt. Camera is moving to the left and upward." in result.stdout
     assert "generation_prompt: test prompt. Camera is moving to the right and slightly downward." in result.stdout
     assert "--prompt 'test prompt. Camera is moving to the right and slightly downward.'" in result.stdout
