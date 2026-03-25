@@ -149,3 +149,88 @@
   - 在命令前加 `HF_HUB_OFFLINE=1`
   - 继续复用同一个 `--output_root demo_data/my5`, 让默认 `resume` 跳过已完成的共享步骤
 - 如果去掉 `--moge_pretrained`, `moge-v2_infer.py` 会退回默认 repo id (`Ruicheng/moge-2-vitl-normal`), 这时离线模式下会因为本地无缓存或无法联网而失败.
+
+## [2026-03-25 13:12:09 UTC] `my7` 启动排查与修正
+
+### 现象
+- 用户提醒 `my6` 已经完成, 但 `my7` 目录仍只有 `d.png`, 没有 `manifest.json`.
+- 系统中没有真实的 `my6` 或 `my7` 推理进程, 只剩上一轮挂起的等待脚本.
+
+### 假设
+- 主假设: 等待脚本中的 `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 把等待脚本自身也匹配进去了, 导致永远不放行.
+- 备选解释: 等待脚本只是还没轮询到下一次检查.
+
+### 验证
+- 静态证据:
+  - `demo_data/my6/manifest.json` 顶层 `status = completed`
+  - 8-11 号镜头全部 `completed`
+- 动态证据:
+  - `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 当前只返回等待脚本本身
+  - `ps -ef` 中没有真实的 `demo_data/my6` 推理进程
+  - `demo_data/my7/manifest.json` 当时不存在
+
+### 已验证结论
+- 上一轮自动接力失败的直接原因, 是 `pgrep` 模式自匹配, 不是 `single_image_multi_trajectory.py` 没有接上.
+- 停掉等待脚本后, 直接执行用户提供的 `my7` 命令即可正常启动.
+
+### 启动后证据
+- `demo_data/my7/manifest.json` 已创建, 顶层 `status = running`
+- 0 号镜头:
+  - `trajectory_assets_status = completed`
+  - `render_status = pending`
+  - `generation_status = pending`
+- 会话日志显示:
+  - `moge-v2_infer.py` 已完成深度估计
+  - 当前正在执行 `rendering_4D_control_maps.py`
+  - 日志已进入 `Rendering(mesh-batch) background`
+- 当前 GPU 观测:
+  - GPU0 `100%`, `10441 / 81920 MiB`
+  - GPU1 `0%`, `4 / 81920 MiB`
+- 解释:
+  - 当前还在前置控制图渲染阶段, 单卡占用是正常现象
+  - 后续进入 Step 6 时, 才会看到双卡 `torchrun`
+
+## [2026-03-25 18:31:00 UTC] `pixi` 真实运行环境版本核对
+
+### 现象
+- 根仓库 `pixi.toml` 静态声明:
+  - `pytorch = 2.3.1.*`
+  - `torchvision = 0.18.1.*`
+  - `torchaudio = 2.3.1.*`
+  - `pytorch-cuda = 12.1.*`
+- 但普通 `python3` 环境里此前看到的是:
+  - `torch 2.6.0+cu126`
+  - `import pytorch3d` 落到工作区本地 `pytorch3d/` 源码目录, 不是已安装发行版
+
+### 假设
+- 主假设: 项目预期使用的 `pixi` 环境中, 实际安装版本与 `pixi.toml` 一致.
+- 备选解释: 也可能在 `bootstrap` 或后续 `pip install` 过程中发生了版本漂移.
+
+### 验证
+- 动态证据1: `pixi run --manifest-path /workspace/VerseCrafter/pixi.toml python -m pip show torch torchvision torchaudio pytorch3d`
+  - `torch 2.3.1`
+  - `torchvision 0.18.1`
+  - `torchaudio 2.3.1`
+  - `pytorch3d 0.7.9`
+  - site-packages 均位于 `/workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages`
+- 动态证据2: 在 `workdir=/workspace` 下执行 `pixi run ... python`
+  - `sys.executable = /workspace/VerseCrafter/.pixi/envs/default/bin/python`
+  - `torch.__version__ = 2.3.1`
+  - `torch.version.cuda = 12.1`
+  - `torch.cuda.is_available() = True`
+  - `pytorch3d.__file__ = /workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/pytorch3d/__init__.py`
+  - `pytorch3d.__version__ = 0.7.9`
+- 补充动态证据3: 在仓库根目录直接用系统 `python3`
+  - `import pytorch3d` 命中 `/workspace/VerseCrafter/pytorch3d`
+  - `__file__ = None`
+  - `__version__` 不存在
+  - `importlib.metadata.version('pytorch3d')` 也拿不到发行版元数据
+
+### 已验证结论
+- 项目当前 `pixi` 默认环境里的真实版本是:
+  - `PyTorch 2.3.1`
+  - `torchvision 0.18.1`
+  - `torchaudio 2.3.1`
+  - `pytorch3d 0.7.9`
+- `pytorch3d` 在 `pixi` 环境里已经正确装入 site-packages.
+- 之前看到的 `torch 2.6.0+cu126` 是系统/外部 Python 环境, 不是这个项目的 `pixi` 环境.

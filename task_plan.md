@@ -263,3 +263,236 @@
 ### 状态
 **任务已完成**
 - 已拿到静态证据、动态验证结果与可直接执行的离线命令.
+
+## [2026-03-25 10:19:21 UTC] 新任务启动: 等待 `demo_data/my6` 完成后接手启动 `demo_data/my7`
+
+### 目标
+- 确认上一轮 `demo_data/my6` 是否已经真正完成, 避免和新一轮 `demo_data/my7` 抢占同一组 GPU.
+- 在 `my6` 完成后, 按用户给定参数启动 `demo_data/my7` 的单图多轨迹生成.
+- 启动后核对进程和输出目录, 确认任务已经稳定进入运行状态.
+
+### 阶段
+- [ ] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+- [ ] 阶段2: 等待或确认 `my6` 结束
+- [ ] 阶段3: 启动 `my7` 推理命令
+- [ ] 阶段4: 核对 `my7` 运行状态并回写日志
+
+### 关键问题
+1. `my6` 当前是仍在正常运行, 还是父进程残留但真正的子任务已经退出.
+2. `my7` 是否应该直接新开全量任务, 还是需要先确认输出目录下有没有残留中间产物.
+
+### 现象
+- 当前系统中仍存在 `my6` 的父进程:
+  - `pixi run python inference/single_image_multi_trajectory.py ... --output_root demo_data/my6`
+- `demo_data/my6/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 0-7 号镜头 `status = completed`
+  - 8 号镜头 `render_status = completed`, 但 `generation_status = pending`
+- `demo_data/my7` 当前只有输入图 `d.png`, 尚未开始生成.
+
+### 当前假设
+- 主假设: `my6` 还没有完成, 当前至少卡在 8 号镜头进入生成前后的某个阶段, 现在不能直接并发启动 `my7`.
+- 备选解释: 也可能是子进程已经退出, 但父进程或 manifest 还没来得及收尾更新.
+- 推翻主假设所需证据:
+  - 如果当前系统里已经没有 `my6` 相关的有效子进程, 且 manifest 随后更新为 `completed`, 那就说明只是尾声收尾而不是仍在计算.
+
+### 状态
+**目前在阶段1**
+- 已完成六文件回读.
+- 正在核对 `my6` 的真实进程状态, 准备在它完成后立即启动 `my7`.
+
+## [2026-03-25 10:20:12 UTC] `my6` 真实状态确认完成, 进入等待阶段
+
+### 验证
+- 动态证据:
+  - 当前父进程 `140743` 仍在运行 `inference/single_image_multi_trajectory.py --output_root demo_data/my6`
+  - 当前子进程 `231319` 正在执行:
+    - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py`
+    - 输出路径指向 `demo_data/my6/8/generated_videos`
+  - `nvidia-smi` 当前显示:
+    - GPU0 `100%`, `75117 / 81920 MiB`
+    - GPU1 `100%`, `75117 / 81920 MiB`
+- 静态证据:
+  - `demo_data/my6/manifest.json` 顶层 `status = running`
+  - 8 号镜头 `render_status = completed`, `generation_status = pending`
+
+### 结论
+- 上一条主假设成立.
+- `my6` 当前仍在真实计算中, 不能与 `my7` 并发启动.
+
+### 已完成
+- [x] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+
+### 当前待办
+- [x] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+- [ ] 阶段2: 等待或确认 `my6` 结束
+- [ ] 阶段3: 启动 `my7` 推理命令
+- [ ] 阶段4: 核对 `my7` 运行状态并回写日志
+
+### 状态
+**目前在阶段2**
+- 已确认 `my6` 正在用双卡处理 8 号镜头生成阶段.
+- 下一步等待它结束后立即启动 `my7`.
+
+## [2026-03-25 10:35:47 UTC] 已建立自动接力等待会话
+
+### 已执行动作
+- 已启动一个持续等待会话:
+  - 当 `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 不再匹配时, 立即执行用户提供的 `demo_data/my7` 命令.
+- 当前等待会话最近一次输出时间:
+  - `2026-03-25 10:35:47 UTC`
+
+### 额外观测
+- `demo_data/my6/8/generated_videos/generated_video_0.mp4` 已经落盘.
+- `manifest.json` 当前显示:
+  - 8 号镜头 `completed`
+  - 9 号镜头 `trajectory_assets_status = completed`
+  - 9 号镜头 `render_status = completed`
+  - 9 号镜头 `generation_status = pending`
+
+### 当前待办
+- [x] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+- [ ] 阶段2: 等待或确认 `my6` 结束
+- [ ] 阶段3: 启动 `my7` 推理命令
+- [ ] 阶段4: 核对 `my7` 运行状态并回写日志
+
+### 状态
+**目前在阶段2**
+- `my6` 正常推进到 9 号镜头的生成前后阶段.
+- `my7` 已进入自动接力等待, 无需人工再次敲命令.
+
+## [2026-03-25 13:10:52 UTC] 发现自动接力脚本自匹配, 准备改为直接启动 `my7`
+
+### 现象
+- 用户提示 `my6` 已经做完, 需要查看 `my7`.
+- 当前系统里没有任何真实的 `demo_data/my6` / `demo_data/my7` 推理进程.
+- 只剩一个等待脚本进程 `242902`.
+- `demo_data/my7` 仍只有输入图 `d.png`, 没有 `manifest.json`.
+
+### 假设
+- 主假设: 等待脚本里的 `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 把等待脚本自身也匹配进去了, 导致它一直认为 `my6` 还在运行.
+- 备选解释: 也可能是 `my6` 虽然完成了, 但等待脚本还没跑到下一轮检查.
+
+### 验证
+- 静态证据:
+  - `demo_data/my6/manifest.json` 顶层 `status = completed`
+  - 8-11 号镜头全部 `completed`
+- 动态证据:
+  - `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 当前只返回等待脚本自身 `242902`
+  - `ps -ef` 中没有真实的 `single_image_multi_trajectory.py --output_root demo_data/my6`
+  - `demo_data/my7/manifest.json` 仍不存在
+
+### 结论
+- 主假设成立.
+- 之前的自动接力没有真正开始 `my7`, 需要手动停止误挂脚本并直接启动 `my7`.
+
+### 当前待办
+- [x] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+- [x] 阶段2: 等待或确认 `my6` 结束
+- [ ] 阶段3: 启动 `my7` 推理命令
+- [ ] 阶段4: 核对 `my7` 运行状态并回写日志
+
+### 状态
+**目前在阶段3**
+- 已确认 `my6` 完成.
+- 正在停止误挂的等待脚本, 然后直接启动 `my7`.
+
+## [2026-03-25 13:12:09 UTC] `my7` 已直接启动并完成首轮运行核对
+
+### 验证
+- 动态证据:
+  - 当前父进程:
+    - `pixi run python inference/single_image_multi_trajectory.py --output_root demo_data/my7`
+  - 当前主 Python 进程:
+    - `inference/single_image_multi_trajectory.py --output_root demo_data/my7`
+  - 当前子进程:
+    - `inference/rendering_4D_control_maps.py`
+    - 输出目录指向 `demo_data/my7/0/rendering_4D_maps`
+  - 运行日志已显示:
+    - MoGe 深度估计完成
+    - 已进入 `Rendering(mesh-batch) background`
+- 静态证据:
+  - `demo_data/my7/manifest.json` 已创建, 顶层 `status = running`
+  - 0 号镜头当前:
+    - `trajectory_assets_status = completed`
+    - `render_status = pending`
+    - `generation_status = pending`
+  - `demo_data/my7/shared/estimated_depth/depth_intrinsics.npz` 已落盘
+  - `demo_data/my7/shared/fitted_3D_gaussian/gaussian_params.json` 已落盘
+- GPU 观测:
+  - 当前为控制图渲染阶段, 观测到:
+    - GPU0 `100%`, `10441 / 81920 MiB`
+    - GPU1 `0%`, `4 / 81920 MiB`
+  - 这与前置单卡阶段的预期一致, 还未进入后续双卡 `torchrun` 生成阶段
+
+### 结论
+- `my7` 已经真正开始运行, 不再是“等待中但没启动”的状态.
+- 之前的问题是等待脚本自匹配, 不是项目推理脚本没有衔接能力.
+
+### 已完成
+- [x] 阶段1: 回读上下文并确认 `my6` 当前真实状态
+- [x] 阶段2: 等待或确认 `my6` 结束
+- [x] 阶段3: 启动 `my7` 推理命令
+- [x] 阶段4: 核对 `my7` 运行状态并回写日志
+
+### 状态
+**任务已完成**
+- `my7` 已由我直接启动.
+- 当前处于 0 号镜头的控制图渲染阶段, 运行状态正常.
+
+## [2026-03-25 13:13:05 UTC] 补充验证: `my7` 已推进到 0 号镜头双卡生成阶段
+
+### 补充动态证据
+- 会话日志已显示:
+  - `torchrun --nproc-per-node=2 inference/versecrafter_inference.py`
+  - `rank=0 device=cuda:0`
+  - `rank=1 device=cuda:1`
+- 当前真实进程树包含:
+  - 父进程 `single_image_multi_trajectory.py`
+  - 中间层 `torchrun --nproc-per-node=2`
+  - 两个 `versecrafter_inference.py` worker
+- `demo_data/my7/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 0 号镜头 `render_status = completed`
+  - 0 号镜头 `generation_status = pending`
+
+### 结论
+- `my7` 已经顺利越过前置单卡阶段, 真正进入双卡生成.
+- 当前运行链路正常.
+
+## [2026-03-25 18:28:00 UTC] 新任务启动: 确认 `pixi` 真实运行环境中的 `PyTorch` / `pytorch3d` 版本
+
+### 目标
+- 区分仓库配置声明的版本, 与 `pixi run python` 实际看到的安装版本.
+- 避免仓库根目录下本地 `pytorch3d/` 源码目录污染导入结果.
+
+### 当前待办
+- [ ] 阶段1: 用 `pixi` 动态检查 `torch` / `pytorch3d` 实际安装状态
+- [ ] 阶段2: 核对 `pip show` / `importlib.metadata` 与导入路径
+- [ ] 阶段3: 汇总结论并回写日志
+
+### 状态
+**目前在阶段1**
+- 已回读六文件上下文.
+- 下一步进入 `pixi` 环境做动态验证.
+
+## [2026-03-25 18:32:00 UTC] `pixi` 版本核对完成
+
+### 已完成
+- [x] 阶段1: 用 `pixi` 动态检查 `torch` / `pytorch3d` 实际安装状态
+- [x] 阶段2: 核对 `pip show` / `importlib.metadata` 与导入路径
+- [x] 阶段3: 汇总结论并回写日志
+
+### 结论
+- `pixi` 默认环境真实版本:
+  - `PyTorch 2.3.1`
+  - `torchvision 0.18.1`
+  - `torchaudio 2.3.1`
+  - `pytorch3d 0.7.9`
+- `torch.version.cuda = 12.1`
+- `torch.cuda.is_available() = True`
+
+### 状态
+**任务已完成**
+- 已完成静态配置与动态环境的交叉核对.
+- 可直接按 `pixi` 环境结论回答用户.

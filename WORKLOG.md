@@ -108,3 +108,50 @@
   - 所有模型参数显式走本地路径
   - 命令前加 `HF_HUB_OFFLINE=1`
   - 不要换 `output_root`, 直接吃 `resume` 的共享产物
+
+## [2026-03-25 13:12:09 UTC] 任务名称: 在 `my6` 完成后接手启动 `demo_data/my7`
+
+### 任务内容
+- 确认 `demo_data/my6` 是否真正完成.
+- 检查上一轮挂起的自动接力是否真的已经把 `demo_data/my7` 启动起来.
+- 若未启动, 直接按用户提供的参数手动启动 `demo_data/my7`, 并核对运行状态.
+
+### 完成过程
+- 先回读 `task_plan.md`, 再检查进程、`demo_data/my6/manifest.json` 与 `demo_data/my7` 目录状态.
+- 验证到 `my6` 实际已经全部完成, 但系统中只剩一个等待脚本, 没有真实的 `my7` 推理进程.
+- 进一步用 `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 证实:
+  - 等待脚本把自己也匹配进去了
+  - 所以一直错误地判断 `my6` 仍在运行
+- 停掉误挂的等待脚本后, 直接按用户原命令启动 `my7`.
+- 启动后立刻核对:
+  - `demo_data/my7/manifest.json` 已创建
+  - `shared/estimated_depth/*` 已落盘
+  - `shared/fitted_3D_gaussian/gaussian_params.json` 已落盘
+  - 当前子进程正在执行 `rendering_4D_control_maps.py`
+  - 当前日志已进入 0 号镜头背景渲染
+
+### 总结感悟
+- 对这种“等待某个进程结束再接力”的脚本, 只靠 `pgrep -af` 这种基于命令行全文匹配的写法很危险.
+- 如果匹配模式被脚本自己的命令行文本包含进去, 就会出现“目标早就结束了, 但等待脚本还在无限等待”的假象.
+- 这次 `my7` 已经真正启动, 但当前还是前置单卡阶段, 还没到后面的双卡生成段.
+
+## [2026-03-25 18:33:10 UTC] 任务名称: 核对 `pixi` 默认环境中的 `PyTorch` / `pytorch3d` 真实版本
+
+### 任务内容
+- 在不只依赖静态配置的前提下, 动态确认项目默认 `pixi` 环境里真实安装的 `torch` / `torchvision` / `torchaudio` / `pytorch3d` 版本.
+- 额外区分普通系统 `python3` 与项目 `pixi` 环境的差异, 避免被本地源码目录误导.
+
+### 完成过程
+- 先回读六文件上下文, 避免把此前“系统 Python 版本”和“项目环境版本”混在一起.
+- 再用 `pixi run --manifest-path ... python -m pip show ...` 读取安装元数据.
+- 接着用 `pixi run ... python` 动态验证:
+  - `sys.executable`
+  - `torch.__version__`
+  - `torch.version.cuda`
+  - `torch.cuda.is_available()`
+  - `pytorch3d.__file__` 与 `pytorch3d.__version__`
+- 最后补做一轮对照验证, 确认普通 `python3` 在仓库根目录下会把本地 `pytorch3d/` 源码目录当成可导入模块, 从而误导版本判断.
+
+### 总结感悟
+- 查 Python 包真实版本时, `pip show`、`importlib.metadata` 和模块 `__file__` 要一起看, 单看 `import` 是否成功不够稳.
+- 这个仓库里真正应该信任的运行环境是 `pixi` 默认环境, 不是外部系统 Python.

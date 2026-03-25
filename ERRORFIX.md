@@ -52,3 +52,37 @@
   - `rank=0 device=cuda:0`
   - `rank=1 device=cuda:1`
 - `nvidia-smi` 也已同时看到两张卡都有占用.
+
+## [2026-03-25 13:12:09 UTC] 问题: `my6` 已完成, 但自动接力没有把 `my7` 启动起来
+
+### 问题现象
+- 用户提示 `my6` 已经做完.
+- 但 `demo_data/my7` 目录仍没有 `manifest.json`, 说明 `my7` 没有真正开始.
+- 系统里没有真实的 `my6` 或 `my7` 推理进程, 只剩一个等待脚本.
+
+### 原因判断
+- 已验证结论:
+  - 等待脚本使用了:
+    - `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'`
+  - 这条匹配规则把等待脚本自身命令行也匹配进去了.
+  - 结果是脚本永远判断“`my6` 仍在运行”, 从而不会执行后面的 `my7` 启动命令.
+
+### 证据
+- `demo_data/my6/manifest.json` 顶层 `status = completed`, 且 8-11 号镜头全部完成.
+- `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 当前只返回等待脚本本身.
+- `demo_data/my7/manifest.json` 在修复前不存在.
+
+### 修复/处置
+- 停掉误挂的等待脚本.
+- 直接按用户提供的参数手动启动 `demo_data/my7`.
+
+### 验证结果
+- `demo_data/my7/manifest.json` 已创建, 顶层 `status = running`.
+- 当前会话日志显示:
+  - MoGe 深度估计完成
+  - 已进入 `rendering_4D_control_maps.py`
+  - 已开始 `Rendering(mesh-batch) background`
+- 当前 GPU 观测:
+  - GPU0 `100%`
+  - GPU1 `0%`
+- 该现象与当前前置单卡阶段一致, 说明 `my7` 已正常开始执行.
