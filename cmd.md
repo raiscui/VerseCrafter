@@ -227,8 +227,8 @@ pixi run pip install xfuser==0.4.2 yunchang==0.6.2 \
 
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
-  --input_image_path 'demo_data/my6/c.png' \
-  --output_root demo_data/my6 \
+  --input_image_path 'demo_data/my7/d.png' \
+  --output_root demo_data/my7 \
   --transformer_path model/VerseCrafter \
   --prompt "A realistic natural video of the original scene, 新海诚卡通风格博物馆,卡通描边,保持束,保留好场景的体积光 / God rays,光束、光柱,镜头光晕,辉光,slight camera motion, high detail." \
   --negative_prompt "粉尘,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
