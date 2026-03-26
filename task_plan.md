@@ -460,6 +460,80 @@
 - `my7` 已经顺利越过前置单卡阶段, 真正进入双卡生成.
 - 当前运行链路正常.
 
+## [2026-03-25 16:40:40 UTC] 新任务启动: 等 `my7` 完成后接手启动 `demo_data/my8`
+
+### 目标
+- 确认 `my7` 当前真实进度, 避免误以为已经接近结束.
+- 在 `my7` 真正完成后, 按用户提供的参数启动 `demo_data/my8`.
+- 这次使用不会自匹配的等待方式, 避免重复出现上一轮自动接力失效的问题.
+
+### 阶段
+- [ ] 阶段1: 核对 `my7` 当前状态与 `my8` 输入目录
+- [ ] 阶段2: 建立基于真实 PID 的等待接力
+- [ ] 阶段3: `my7` 结束后启动 `my8`
+- [ ] 阶段4: 核对 `my8` 已进入运行态
+
+### 现象
+- 当前 `demo_data/my7/manifest.json` 顶层仍是 `status = running`.
+- 已完成镜头:
+  - 0, 1, 2, 3
+- 当前镜头:
+  - 4 号 `zoom_in`
+  - `trajectory_assets_status = completed`
+  - `render_status = completed`
+  - `generation_status = pending`
+- 当前真实进程:
+  - 父进程 `290817` 为 `inference/single_image_multi_trajectory.py --output_root demo_data/my7`
+  - 中间层 `331673` 为 `torchrun --nproc-per-node=2`
+  - 两个 `versecrafter_inference.py` worker 正在运行
+- `demo_data/my8` 当前只有输入图 `e.png`, 尚未启动.
+
+### 做出的决定
+- 决定: 使用等待真实 PID `290817` 退出的方式做接力.
+  - 理由: 这比按命令文本模糊搜索更稳, 不会把等待脚本自己匹配进去.
+- 决定: 在启动 `my8` 前先额外检查一次 `my7/manifest.json` 是否为 `completed`.
+  - 理由: 这样可以防止“进程异常退出但 manifest 还没完成”的情况被误当成正常结束.
+
+### 当前待办
+- [ ] 阶段1: 核对 `my7` 当前状态与 `my8` 输入目录
+- [ ] 阶段2: 建立基于真实 PID 的等待接力
+- [ ] 阶段3: `my7` 结束后启动 `my8`
+- [ ] 阶段4: 核对 `my8` 已进入运行态
+
+### 状态
+**目前在阶段1**
+- 已完成现场核对.
+- 下一步建立基于真实 PID 的等待接力会话.
+
+## [2026-03-25 16:42:30 UTC] 已建立基于真实 PID 的 `my8` 接力等待
+
+### 已执行动作
+- 已启动等待会话:
+  - 监控 `my7` 主进程 PID `290817`
+  - 当该 PID 退出后, 先检查 `demo_data/my7/manifest.json` 顶层状态
+  - 仅当状态为 `completed` 时, 才启动 `demo_data/my8`
+- 当前等待会话最近一次输出时间:
+  - `2026-03-25 16:42:23 UTC`
+
+### 额外观测
+- `demo_data/my7/manifest.json` 当前未完成镜头为:
+  - 4 `zoom_in`: `trajectory_assets_status = completed`, `render_status = completed`, `generation_status = pending`
+  - 5-11 号镜头均尚未开始
+- `nvidia-smi` 当前显示:
+  - GPU0 `100%`, `75117 / 81920 MiB`
+  - GPU1 `100%`, `75117 / 81920 MiB`
+
+### 当前待办
+- [x] 阶段1: 核对 `my7` 当前状态与 `my8` 输入目录
+- [x] 阶段2: 建立基于真实 PID 的等待接力
+- [ ] 阶段3: `my7` 结束后启动 `my8`
+- [ ] 阶段4: 核对 `my8` 已进入运行态
+
+### 状态
+**目前在阶段2**
+- `my7` 正在 4 号镜头双卡生成阶段.
+- `my8` 已进入 PID 驱动的自动接力等待.
+
 ## [2026-03-25 18:28:00 UTC] 新任务启动: 确认 `pixi` 真实运行环境中的 `PyTorch` / `pytorch3d` 版本
 
 ### 目标
@@ -496,3 +570,146 @@
 **任务已完成**
 - 已完成静态配置与动态环境的交叉核对.
 - 可直接按 `pixi` 环境结论回答用户.
+
+## [2026-03-26 03:05:10 UTC] 新任务启动: 等 `my8` 完成后接手启动 `demo_data/my9`
+
+### 目标
+- 确认 `my8` 当前真实运行状态, 避免误把“还在双卡生成”当成“快结束了”.
+- 在 `my8` 真正完成后, 按用户提供的参数启动 `demo_data/my9`.
+- 继续沿用 PID 驱动 + manifest 二次确认的接力方式, 避免等待脚本自匹配或异常退出误判.
+
+### 阶段
+- [ ] 阶段1: 回读上下文并核对 `my8` / `my9` 当前状态
+- [ ] 阶段2: 建立基于真实 PID 的 `my9` 接力等待
+- [ ] 阶段3: `my8` 完成后启动 `my9`
+- [ ] 阶段4: 核对 `my9` 已进入运行态
+
+### 现象
+- 当前真实运行中的主进程:
+  - `PID 412060`
+  - `inference/single_image_multi_trajectory.py --output_root demo_data/my8`
+- 当前正在执行的双卡生成:
+  - 5 号镜头 `clockwise`
+  - 中间层 `torchrun --nproc-per-node=2`
+  - 两个 `versecrafter_inference.py` worker 均在运行
+- `demo_data/my8/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 5 号镜头 `trajectory_assets_status = completed`
+  - 5 号镜头 `render_status = completed`
+  - 5 号镜头 `generation_status = pending`
+  - 6-11 号镜头尚未开始
+- `demo_data/my9` 当前只有输入图 `f.png`, 尚未启动.
+
+### 做出的决定
+- 决定: 监控 `my8` 主 Python 进程 `PID 412060` 的退出, 而不是按命令文本搜索.
+  - 理由: 真实 PID 是最不容易误匹配的等待门闩.
+- 决定: 只有在 `my8/manifest.json` 顶层状态为 `completed` 时, 才自动启动 `my9`.
+  - 理由: 可以拦住“进程异常退出但结果未完成”的情况.
+
+### 当前待办
+- [ ] 阶段1: 回读上下文并核对 `my8` / `my9` 当前状态
+- [ ] 阶段2: 建立基于真实 PID 的 `my9` 接力等待
+- [ ] 阶段3: `my8` 完成后启动 `my9`
+- [ ] 阶段4: 核对 `my9` 已进入运行态
+
+### 状态
+**目前在阶段1**
+- 已完成现场核对.
+- 下一步建立 `my8 -> my9` 的 PID 驱动接力等待.
+
+## [2026-03-26 03:06:30 UTC] 已建立基于真实 PID 的 `my9` 接力等待
+
+### 已执行动作
+- 已启动等待会话:
+  - 监控 `my8` 主进程 PID `412060`
+  - 当该 PID 退出后, 先检查 `demo_data/my8/manifest.json` 顶层状态
+  - 仅当状态为 `completed` 时, 才启动 `demo_data/my9`
+- 当前等待会话最近一次输出时间:
+  - `2026-03-26 03:06:20 UTC`
+
+### 额外观测
+- `demo_data/my8/manifest.json` 当前未完成镜头为:
+  - 5 `clockwise`: `trajectory_assets_status = completed`, `render_status = completed`, `generation_status = pending`
+  - 6-11 号镜头尚未开始
+- `nvidia-smi` 当前显示:
+  - GPU0 `100%`, `75117 / 81920 MiB`
+  - GPU1 `100%`, `75117 / 81920 MiB`
+
+### 当前待办
+- [x] 阶段1: 回读上下文并核对 `my8` / `my9` 当前状态
+- [x] 阶段2: 建立基于真实 PID 的 `my9` 接力等待
+- [ ] 阶段3: `my8` 完成后启动 `my9`
+- [ ] 阶段4: 核对 `my9` 已进入运行态
+
+### 状态
+**目前在阶段2**
+- `my8` 正在 5 号镜头双卡生成阶段.
+- `my9` 已进入 PID 驱动的自动接力等待.
+
+## [2026-03-26 08:07:57 UTC] `left_up` / `right_up` 注视目标偏移修复完成
+
+### 验证
+- 静态证据:
+  - `TrajectoryPreset` 已新增 `center_facing_target_offset_scale_cv` 元数据
+  - `left_up` 现在带有轻微左向 look-at 偏移
+  - `right_up` 现在带有轻微右向 look-at 偏移
+  - `generate_blender_camera_trajectory()` 在 `center_facing` 模式下, 会把该偏移叠加到默认中心目标点
+- 动态证据:
+  - `python3 -m py_compile inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py`
+    - 结果: 通过
+  - `timeout 120s pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+    - 结果: `13 passed in 0.16s`
+  - `timeout 120s pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+    - 结果: `4 passed in 0.75s`
+- 新增回归验证:
+  - 已新增测试, 通过反推 `center_depth` 平面上的 look-at 交点 X 坐标
+  - 验证 `left_up` 的目标点稳定小于 `0`
+  - 验证 `right_up` 的目标点稳定大于 `0`
+  - 同时验证普通 `left` / `right` 仍保持中心注视
+
+### 结论
+- 主假设成立.
+- 问题确实不是平移轨迹本身, 而是 `center_facing` 目标点一直被统一锁在画面中心.
+- 现在 `left_up` 会轻微看向左侧, `right_up` 会轻微看向右侧, 不再始终盯死中心.
+
+### 已完成
+- [x] 阶段1: 定位轨迹定义与 look-at 目标生成逻辑
+- [x] 阶段2: 修改 `left_up` / `right_up` 的目标点策略
+- [x] 阶段3: 补充或更新回归测试
+- [x] 阶段4: 运行聚焦验证并回写日志
+
+### 状态
+**任务已完成**
+- `left_up` / `right_up` 的注视目标偏移已修复并验证通过.
+
+
+## [2026-03-26 07:59:42 UTC] 新任务启动: 调整 `left_up` / `right_up` 镜头的注视目标偏移
+
+### 目标
+- 修改 `left_up` / `right_up` 两个轨迹的 look-at 目标点, 让它们不再始终看向画面中心.
+- 保持位移趋势仍然是“左上”与“右上”, 但镜头注视方向要分别略微偏向左侧与右侧.
+- 增加回归验证, 防止这两个轨迹以后再次退回中心注视.
+
+### 阶段
+- [ ] 阶段1: 定位轨迹定义与 look-at 目标生成逻辑
+- [ ] 阶段2: 修改 `left_up` / `right_up` 的目标点策略
+- [ ] 阶段3: 补充或更新回归测试
+- [ ] 阶段4: 运行聚焦验证并回写日志
+
+### 现象
+- 用户当前要求:
+  - `left_up` 时镜头目标点要向水平左侧偏移
+  - `right_up` 时镜头目标点要向水平右侧偏移
+- 当前表现被用户观察为:
+  - 虽然相机运动是左上 / 右上, 但镜头仍然始终看向画面中心
+
+### 当前假设
+- 主假设: 当前轨迹生成逻辑里, `left_up` / `right_up` 仍复用统一的 `center_facing` 注视目标, 没有给这两个斜向运动单独施加水平 look-at 偏移.
+- 备选解释: 也可能是轨迹位置本身已经带了斜向位移, 但最终生成相机朝向时又被统一重新对准中心.
+- 推翻主假设所需证据:
+  - 如果代码里已经存在 `left_up` / `right_up` 的专属 look-at 目标配置, 那问题就不在 preset 数据, 而在后续朝向求解阶段.
+
+### 状态
+**目前在阶段1**
+- 已完成六文件回读.
+- 正在定位 `left_up` / `right_up` 对应的轨迹与相机朝向代码路径.

@@ -234,3 +234,53 @@
   - `pytorch3d 0.7.9`
 - `pytorch3d` 在 `pixi` 环境里已经正确装入 site-packages.
 - 之前看到的 `torch 2.6.0+cu126` 是系统/外部 Python 环境, 不是这个项目的 `pixi` 环境.
+
+## [2026-03-26 08:07:57 UTC] `left_up` / `right_up` 注视目标偏移修复
+
+### 现象
+- 用户观察到:
+  - `left_up` / `right_up` 的机位位移方向是对的
+  - 但镜头注视点仍然始终看向画面中心
+- 用户期望:
+  - `left_up` 要略微看向左侧
+  - `right_up` 要略微看向右侧
+  - 偏移不要太大, 但要有明确方向感
+
+### 假设
+- 主假设: 问题不在 diagonal 轨迹位移本身, 而在 `center_facing` 模式把所有 preset 的目标点统一锁定为同一个中心点.
+- 备选解释: 也可能 preset 已经带有专属注视目标, 但后续 `make_blender_camera_to_world()` 之前又被统一改回中心.
+
+### 验证
+- 静态证据:
+  - `generate_blender_camera_trajectory()` 中原先统一使用:
+    - `target_blender = BLENDER_FORWARD_TARGET_UNIT * center_depth`
+  - 循环内 `camera_rotation == "center_facing"` 时直接使用这个固定中心点
+  - `left_up` / `right_up` 之前只有 `linear_direction_cv`, 没有任何 look-at 偏移元数据
+- 修改策略:
+  - 为 `TrajectoryPreset` 增加 `center_facing_target_offset_scale_cv`
+  - 仅给:
+    - `left_up = (-0.35, 0.0, 0.0)`
+    - `right_up = (0.35, 0.0, 0.0)`
+  - 实际偏移量按:
+    - `movement_distance * translation_reference_depth * scale_vector`
+  - 再统一通过 `cv_vector_to_blender()` 转到 Blender 坐标
+- 动态证据:
+  - 新增测试通过反推 `y = center_depth` 平面上的视线交点
+  - 验证:
+    - `left_up` 的推导目标点 `x < 0`
+    - `right_up` 的推导目标点 `x > 0`
+    - `left` / `right` 仍保持 `x = 0`
+
+### 已验证结论
+- 主假设成立.
+- 需要分开建模的其实是两件事:
+  - 相机“走向哪里”
+  - 相机“看向哪里”
+- 这次修复后:
+  - diagonal up 的位移语义保持不变
+  - 但 look-at 目标点不再被迫锁死到中心
+- 额外收获:
+  - 原有两个测试本身已经与当前代码漂移:
+    - orbit 变体测试忽略了 `orbit_direction`
+    - `left_down` / `right_down` 仍按旧的 `0.3` 垂直比例断言
+  - 已一并修正为匹配当前真实元数据语义

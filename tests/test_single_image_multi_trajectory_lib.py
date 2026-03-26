@@ -160,17 +160,10 @@ def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
 
     assert np.allclose(smaller_translations[:, 1], 0.0, atol=1e-6)
     assert np.allclose(wider_counterclockwise_translations[:, 1], 0.0, atol=1e-6)
-    assert np.allclose(smaller_translations, baseline_translations * 0.65, atol=1e-6)
-    assert np.allclose(
-        wider_counterclockwise_translations[:, 0],
-        baseline_translations[:, 0] * 1.5,
-        atol=1e-6,
-    )
-    assert np.allclose(
-        wider_counterclockwise_translations[:, 2],
-        -baseline_translations[:, 2] * 1.5,
-        atol=1e-6,
-    )
+
+    # `clockwise_0.65` 现在不只是半径缩小,
+    # 还带着更小的 orbit_direction, 所以不能再按逐帧等比例去比.
+    # 这里改为验证“半径倍率”和“顺/逆时针方向”这两个真正稳定的契约.
     assert np.isclose(
         np.max(np.linalg.norm(smaller_translations, axis=1)),
         np.max(np.linalg.norm(baseline_translations, axis=1)) * 0.65,
@@ -179,9 +172,10 @@ def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     assert np.isclose(
         np.max(np.linalg.norm(wider_counterclockwise_translations, axis=1)),
         np.max(np.linalg.norm(baseline_translations, axis=1)) * 1.5,
-        atol=1e-6,
+        atol=5e-4,
     )
     assert baseline_translations[1, 2] < 0.0
+    assert smaller_translations[1, 2] < 0.0
     assert wider_counterclockwise_translations[1, 2] > 0.0
 
 
@@ -221,13 +215,51 @@ def test_diagonal_linear_variants_preserve_horizontal_and_vertical_scales() -> N
 
     assert np.allclose(left_up_translations[:, 2], up_translations[:, 2] * 0.6, atol=1e-6)
     assert np.allclose(right_up_translations[:, 2], up_translations[:, 2] * 0.6, atol=1e-6)
-    assert np.allclose(left_down_translations[:, 2], -up_translations[:, 2] * 0.3, atol=1e-6)
-    assert np.allclose(right_down_translations[:, 2], -up_translations[:, 2] * 0.3, atol=1e-6)
+    assert np.allclose(left_down_translations[:, 2], -up_translations[:, 2] * 0.8, atol=1e-6)
+    assert np.allclose(right_down_translations[:, 2], -up_translations[:, 2] * 0.8, atol=1e-6)
 
     assert left_up_translations[-1, 2] > 0.0
     assert right_up_translations[-1, 2] > 0.0
     assert left_down_translations[-1, 2] < 0.0
     assert right_down_translations[-1, 2] < 0.0
+
+
+def test_left_up_and_right_up_shift_center_facing_look_at_horizontally() -> None:
+    common_kwargs = {
+        "movement_distance": 0.5,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+    }
+
+    left = generate_blender_camera_trajectory("left", **common_kwargs)
+    right = generate_blender_camera_trajectory("right", **common_kwargs)
+    left_up = generate_blender_camera_trajectory("left_up", **common_kwargs)
+    right_up = generate_blender_camera_trajectory("right_up", **common_kwargs)
+
+    def infer_target_x(matrices: np.ndarray) -> np.ndarray:
+        positions = matrices[:, :3, 3]
+        forwards = -matrices[:, :3, 2]
+
+        # 这些 linear preset 都盯向 `y = center_depth` 这一张前方平面.
+        # 因而可以通过射线与该平面的交点, 反推出实际 look-at 目标点的 X 偏移.
+        target_scales = (common_kwargs["center_depth"] - positions[:, 1]) / forwards[:, 1]
+        inferred_targets = positions + forwards * target_scales[:, None]
+        return inferred_targets[:, 0]
+
+    left_target_x = infer_target_x(left)
+    right_target_x = infer_target_x(right)
+    left_up_target_x = infer_target_x(left_up)
+    right_up_target_x = infer_target_x(right_up)
+
+    assert np.allclose(left_target_x, 0.0, atol=1e-6)
+    assert np.allclose(right_target_x, 0.0, atol=1e-6)
+    assert np.all(left_up_target_x < -1e-6)
+    assert np.all(right_up_target_x > 1e-6)
+
+    # 偏移要能看出来, 但不能大到把目标点直接甩到极端侧面.
+    assert np.max(np.abs(left_up_target_x)) < np.max(np.abs(left_up[:, 0, 3]))
+    assert np.max(np.abs(right_up_target_x)) < np.max(np.abs(right_up[:, 0, 3]))
 
 
 def test_convert_static_gaussian_json_to_trajectory_repeats_frames_and_transforms_coords(tmp_path: Path) -> None:

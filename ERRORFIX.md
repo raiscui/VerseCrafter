@@ -86,3 +86,42 @@
   - GPU0 `100%`
   - GPU1 `0%`
 - 该现象与当前前置单卡阶段一致, 说明 `my7` 已正常开始执行.
+
+## [2026-03-26 08:07:57 UTC] 问题: `left_up` / `right_up` 运动方向正确, 但镜头仍始终看向画面中心
+
+### 问题现象
+- `left_up` / `right_up` 的平移轨迹是对的.
+- 但最终画面里镜头仍然始终盯着中心, 没有体现“左上时略看左, 右上时略看右”的视线语义.
+
+### 原因判断
+- 已验证结论:
+  - 问题不在轨迹位移向量.
+  - 问题出在 `generate_blender_camera_trajectory()` 的 `center_facing` 分支:
+    - 所有 preset 统一共享同一个中心目标点
+    - `left_up` / `right_up` 之前没有自己的 look-at 偏移元数据
+
+### 证据
+- 静态证据:
+  - `target_blender = BLENDER_FORWARD_TARGET_UNIT * center_depth`
+  - `camera_rotation == "center_facing"` 时直接复用该目标点
+- 动态证据:
+  - 新增测试通过反推 `center_depth` 平面交点, 验证原先中心注视语义确实会把目标点锁在 `x = 0`
+
+### 修复/处置
+- 为 `TrajectoryPreset` 增加 `center_facing_target_offset_scale_cv`
+- 仅对两个 up diagonal preset 增加轻微水平偏移:
+  - `left_up = (-0.35, 0.0, 0.0)`
+  - `right_up = (0.35, 0.0, 0.0)`
+- 在 `center_facing` 分支中, 把该偏移按实际轨迹尺度换算后叠加到目标点
+
+### 验证结果
+- `python3 -m py_compile inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py`
+  - 通过
+- `timeout 120s pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+  - `13 passed in 0.16s`
+- `timeout 120s pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+  - `4 passed in 0.75s`
+- 新增回归测试已验证:
+  - `left_up` 的 look-at 目标点 `x < 0`
+  - `right_up` 的 look-at 目标点 `x > 0`
+  - 普通 `left` / `right` 仍保持中心注视

@@ -155,3 +155,27 @@
 ### 总结感悟
 - 查 Python 包真实版本时, `pip show`、`importlib.metadata` 和模块 `__file__` 要一起看, 单看 `import` 是否成功不够稳.
 - 这个仓库里真正应该信任的运行环境是 `pixi` 默认环境, 不是外部系统 Python.
+
+## [2026-03-26 08:07:57 UTC] 任务名称: 修复 `left_up` / `right_up` 始终看向中心的问题
+
+### 任务内容
+- 调整 `left_up` / `right_up` 两个轨迹在 `center_facing` 模式下的注视目标点.
+- 让 `left_up` 轻微偏向左看, `right_up` 轻微偏向右看.
+- 补充回归测试, 把“看向哪里”这层语义锁住.
+
+### 完成过程
+- 先定位到核心问题不在平移轨迹, 而在 `generate_blender_camera_trajectory()` 对 `center_facing` 统一使用同一个中心目标点.
+- 没有给 `left_up` / `right_up` 加硬编码名字分支, 而是给 `TrajectoryPreset` 增加:
+  - `center_facing_target_offset_scale_cv`
+- 为两个 diagonal up preset 设置轻微水平偏移:
+  - `left_up = (-0.35, 0.0, 0.0)`
+  - `right_up = (0.35, 0.0, 0.0)`
+- 偏移量按 `movement_distance * translation_reference_depth` 缩放后, 再统一转换到 Blender 坐标.
+- 新增测试通过射线和平面交点反推出实际 look-at 目标点 X 坐标, 验证左右偏移确实生效.
+- 额外修正两条已漂移的旧测试, 让断言重新匹配当前:
+  - orbit 方向元数据
+  - diagonal down 垂直缩放常量
+
+### 总结感悟
+- “镜头怎么移动”和“镜头看向哪里”是两套独立语义, 不能只靠位移方向去暗示视线方向.
+- 轨迹测试如果只校验 translation, 很容易漏掉这种“机位走对了, 但视线语义还是错的”回归.

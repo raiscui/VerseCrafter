@@ -41,7 +41,8 @@ DEFAULT_RADIUS_X_FACTOR = 0.15
 DEFAULT_RADIUS_Y_FACTOR = 0.10
 DEFAULT_NUM_CIRCLES = 2
 LINEAR_DIAGONAL_UP_VERTICAL_SCALE = 0.6
-LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = LINEAR_DIAGONAL_UP_VERTICAL_SCALE / 1.5
+# LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = LINEAR_DIAGONAL_UP_VERTICAL_SCALE / 0.8  #  朝下更给力
+LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = 0.8  #  原始画面镜头在上方, 需要运动 朝下更给力点
 
 
 # ============================================================================
@@ -59,6 +60,7 @@ class TrajectoryPreset:
     linear_direction_cv: tuple[float, float, float] | None = None
     orbit_radius_scale: float = 1.0
     orbit_direction: float = 1.0
+    center_facing_target_offset_scale_cv: tuple[float, float, float] | None = None
 
 
 TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
@@ -118,7 +120,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "orbit",
         "Camera is orbiting clockwise around the scene with a tighter radius",
         orbit_radius_scale=0.65,
-        orbit_direction=1.0,
+        orbit_direction=0.8,
     ),
     TrajectoryPreset(
         7,
@@ -127,7 +129,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "orbit",
         "Camera is orbiting counterclockwise around the scene with a wider radius",
         orbit_radius_scale=1.5,
-        orbit_direction=-1.0,
+        orbit_direction=-1.3,
     ),
     TrajectoryPreset(
         8,
@@ -136,6 +138,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the left and upward",
         linear_direction_cv=(-1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
+        center_facing_target_offset_scale_cv=(-0.35, 0.0, 0.0),
     ),
     TrajectoryPreset(
         9,
@@ -144,6 +147,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the right and upward",
         linear_direction_cv=(1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
+        center_facing_target_offset_scale_cv=(0.35, 0.0, 0.0),
     ),
     TrajectoryPreset(
         10,
@@ -539,10 +543,26 @@ def generate_blender_camera_trajectory(
     offsets_blender = offsets_cv @ COORD_TRANSFORM_CV2BLENDER.T
     target_blender = BLENDER_FORWARD_TARGET_UNIT * float(center_depth)
 
+    # `left_up` / `right_up` 这类斜向平移镜头,
+    # 如果始终盯着绝对中心, 画面会显得“机位在斜走, 但视线没跟着镜头语义走”.
+    # 这里允许 preset 数据提供一个轻微的 center-facing 注视点偏移比例.
+    center_facing_target_blender = target_blender
+    if preset.center_facing_target_offset_scale_cv is not None:
+        target_offset_scale_cv = np.asarray(
+            preset.center_facing_target_offset_scale_cv,
+            dtype=np.float32,
+        ).reshape(3)
+        target_offset_cv = (
+            target_offset_scale_cv
+            * float(movement_distance)
+            * float(translation_reference_depth)
+        )
+        center_facing_target_blender = target_blender + cv_vector_to_blender(target_offset_cv)
+
     matrices: list[np.ndarray] = []
     for position in offsets_blender:
         if camera_rotation == "center_facing":
-            current_target = target_blender
+            current_target = center_facing_target_blender
         elif camera_rotation == "trajectory_aligned":
             current_target = target_blender + position * 2.0
         else:
