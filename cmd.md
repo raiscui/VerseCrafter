@@ -230,14 +230,14 @@ pixi run python inference/single_image_multi_trajectory.py \
   --input_image_path 'demo_data/my4/a.png' \
   --output_root demo_data/my4-1 \
   --transformer_path model/VerseCrafter \
-  --prompt "A realistic natural video of the original scene, 新海诚卡通风格博物馆,卡通描边,减弱体积光,光束、光柱,镜头光晕,相机运动时保持场景内容不变.不要镜面反射,不要高反光地面, high detail." \
+  --prompt "A realistic natural video of the original scene, 新海诚卡通风格博物馆,卡通描边,减弱体积光,光束、光柱,镜头光晕,相机运动时保持场景内容不变.保证立体感的正确性,保证几何机构的不变性.不要镜面反射,不要高反光地面, high detail." \
   --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
   --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
-  --auto_center_depth_quantile 0.2 \
+  --auto_center_depth_quantile 0.35 \
   --translation_reference_depth_scale 0.95 \
-  --total_movement_distance_factor 1.5 \
+  --total_movement_distance_factor 1.2 \
   --sample_size "720,1280" \
   --num_inference_steps 60 \
   --gpu_memory_mode model_cpu_offload \
@@ -245,8 +245,8 @@ pixi run python inference/single_image_multi_trajectory.py \
   --ring_degree 1 \
   --nproc_per_node 2 \
   --guidance_scale 5.0 \
-  --seed 2025 \
-  --fps 16
+  --seed 2026 \
+  --fps 24
 ```
 
 ### 6.3 只重跑双卡 Step 6 的命令

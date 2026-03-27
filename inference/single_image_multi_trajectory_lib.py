@@ -71,6 +71,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the left",
         linear_direction_cv=(-1.0, 0.0, 0.0),
+        center_facing_target_offset_scale_cv=(-0.15, 0.0, 0.0),
     ),
     TrajectoryPreset(
         1,
@@ -79,6 +80,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the right",
         linear_direction_cv=(1.0, 0.0, 0.0),
+        center_facing_target_offset_scale_cv=(0.15, 0.0, 0.0),
     ),
     TrajectoryPreset(
         2,
