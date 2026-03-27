@@ -713,3 +713,223 @@
 **目前在阶段1**
 - 已完成六文件回读.
 - 正在定位 `left_up` / `right_up` 对应的轨迹与相机朝向代码路径.
+
+## [2026-03-26 14:44:50 UTC] 新任务启动: 等 `my9` 完成后接手启动 `demo_data/my10`
+
+### 目标
+- 确认 `my9` 当前真实运行状态, 避免重复启动或错误判断已完成.
+- 在 `my9` 真正完成后, 按用户提供的更新后 `negative_prompt` 启动 `demo_data/my10`.
+- 继续沿用真实 PID + manifest 完成态的接力方式, 保持接力稳定.
+
+### 阶段
+- [ ] 阶段1: 核对 `my9` / `my10` 当前状态
+- [ ] 阶段2: 建立基于真实 PID 的 `my10` 接力等待
+- [ ] 阶段3: `my9` 完成后启动 `my10`
+- [ ] 阶段4: 核对 `my10` 已进入运行态
+
+### 现象
+- 当前真实运行中的主进程:
+  - `PID 441051`
+  - `inference/single_image_multi_trajectory.py --output_root demo_data/my9`
+- 当前正在执行的双卡生成:
+  - 7 号镜头 `counterclockwise_1.5`
+  - 中间层 `torchrun --nproc-per-node=2`
+  - 两个 `versecrafter_inference.py` worker 均在运行
+- `demo_data/my9/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 7 号镜头 `trajectory_assets_status = completed`
+  - 7 号镜头 `render_status = completed`
+  - 7 号镜头 `generation_status = pending`
+  - 8-11 号镜头尚未开始
+- `demo_data/my10` 当前只有输入图 `g.png`, 尚未启动.
+- 用户为 `my10` 提供的新 `negative_prompt` 额外加入了:
+  - `高反光`
+  - `高光点`
+  - `脏`
+
+### 做出的决定
+- 决定: 监控 `my9` 主 Python 进程 `PID 441051` 的退出.
+  - 理由: 真实 PID 作为门闩最稳, 不会被等待脚本自己污染.
+- 决定: 只有在 `my9/manifest.json` 顶层状态为 `completed` 时, 才自动启动 `my10`.
+  - 理由: 可以拦住“进程退出但批处理未完成”的异常场景.
+- 决定: `my10` 启动命令严格使用用户刚给的新版 `negative_prompt`.
+  - 理由: 这次用户明确追加了新的负面约束, 不能沿用 `my9` 的旧参数.
+
+### 当前待办
+- [ ] 阶段1: 核对 `my9` / `my10` 当前状态
+- [ ] 阶段2: 建立基于真实 PID 的 `my10` 接力等待
+- [ ] 阶段3: `my9` 完成后启动 `my10`
+- [ ] 阶段4: 核对 `my10` 已进入运行态
+
+### 状态
+**目前在阶段1**
+- 已完成现场核对.
+- 下一步建立 `my9 -> my10` 的 PID 驱动接力等待.
+
+## [2026-03-26 14:46:09 UTC] 已建立基于真实 PID 的 `my10` 接力等待
+
+### 已执行动作
+- 已启动等待会话:
+  - 监控 `my9` 主进程 PID `441051`
+  - 当该 PID 退出后, 先检查 `demo_data/my9/manifest.json` 顶层状态
+  - 仅当状态为 `completed` 时, 才启动 `demo_data/my10`
+- 当前等待会话最近一次输出时间:
+  - `2026-03-26 14:46:09 UTC`
+
+### 额外观测
+- `demo_data/my9/manifest.json` 当前未完成镜头为:
+  - 7 `counterclockwise_1.5`: `trajectory_assets_status = completed`, `render_status = completed`, `generation_status = pending`
+  - 8-11 号镜头尚未开始
+- `my10` 启动时将使用用户刚给的新版 `negative_prompt`, 其中新增:
+  - `高反光`
+  - `高光点`
+  - `脏`
+
+### 当前待办
+- [x] 阶段1: 核对 `my9` / `my10` 当前状态
+- [x] 阶段2: 建立基于真实 PID 的 `my10` 接力等待
+- [ ] 阶段3: `my9` 完成后启动 `my10`
+- [ ] 阶段4: 核对 `my10` 已进入运行态
+
+### 状态
+**目前在阶段2**
+- `my9` 正在 7 号镜头双卡生成阶段.
+- `my10` 已进入 PID 驱动的自动接力等待.
+
+## [2026-03-27 01:48:20 UTC] 新任务启动: 等当前批处理结束后接手新的 `my4` 命令
+
+### 目标
+- 核对当前批处理链路是否已从 `my9` 自动推进到 `my10`.
+- 判断用户新给的 `my4` 命令是否具备可执行前提, 尤其是输入路径与输出目录是否存在.
+- 在前提明确后, 决定是挂新接力还是等待用户修正路径.
+
+### 阶段
+- [ ] 阶段1: 回读上下文并核对 `my9` / `my10` / `my4` 当前状态
+- [ ] 阶段2: 判断新命令是否具备可执行前提
+- [ ] 阶段3: 若可执行则建立接力, 若不可执行则向用户请求最小澄清
+
+### 现象
+- `my9` 已经结束, 且上一轮接力已经把 `demo_data/my10` 自动启动.
+- 当前真实运行中的主进程:
+  - `PID 475666`
+  - `inference/single_image_multi_trajectory.py --output_root demo_data/my10`
+- 当前正在执行的双卡生成:
+  - 9 号镜头 `right_up`
+  - 中间层 `torchrun --nproc-per-node=2`
+  - 两个 `versecrafter_inference.py` worker 均在运行
+- `demo_data/my10/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 9 号镜头 `trajectory_assets_status = completed`
+  - 9 号镜头 `render_status = completed`
+  - 9 号镜头 `generation_status = pending`
+  - 10-11 号镜头尚未开始
+- 用户这次给的输入路径:
+  - `demo_data/my4/a.png`
+- 但当前工作区里:
+  - 不存在 `demo_data/my4`
+  - 也不存在任何 `a.png`
+
+### 做出的决定
+- 决定: 先不为这条 `my4` 命令挂接力.
+  - 理由: 当前输入路径缺失, 直接挂接力只会在批处理结束后失败.
+- 决定: 需要向用户确认正确输入路径.
+  - 理由: 这是执行前提缺失, 不能靠猜测替代.
+
+### 当前待办
+- [x] 阶段1: 回读上下文并核对 `my9` / `my10` / `my4` 当前状态
+- [x] 阶段2: 判断新命令是否具备可执行前提
+- [ ] 阶段3: 若可执行则建立接力, 若不可执行则向用户请求最小澄清
+
+### 状态
+**目前在阶段3**
+- 已确认 `my10` 正在运行.
+- 已确认 `demo_data/my4/a.png` 缺失, 当前需要用户确认正确输入路径.
+
+## [2026-03-27 01:57:26 UTC] `demo_data/my4/a.png` 已出现, 准备建立 `my10 -> my4` 接力
+
+### 现象更新
+- 当前 `demo_data/my4/a.png` 已存在.
+- `demo_data/my4` 目录当前只有这一张输入图, 尚未产生 `manifest.json` 或中间产物.
+- 当前真实运行中的主进程:
+  - `PID 475666`
+  - `inference/single_image_multi_trajectory.py --output_root demo_data/my10`
+- `demo_data/my10/manifest.json` 当前显示:
+  - 顶层 `status = running`
+  - 10 号镜头 `left_down` 正在双卡生成
+  - 11 号镜头尚未开始
+
+### 结论更新
+- 上一条“输入路径缺失”的阻塞已解除.
+- 现在可以为用户新的 `demo_data/my4` 命令建立接力等待.
+
+### 当前待办
+- [x] 阶段1: 回读上下文并核对 `my9` / `my10` / `my4` 当前状态
+- [x] 阶段2: 判断新命令是否具备可执行前提
+- [ ] 阶段3: 若可执行则建立接力, 若不可执行则向用户请求最小澄清
+
+### 状态
+**目前在阶段3**
+- `my10` 正在运行.
+- `demo_data/my4/a.png` 已就绪, 下一步建立 `my10 -> my4` 的 PID 驱动接力等待.
+
+## [2026-03-27 01:59:52 UTC] 接力监控继续中: 等待 `my10` 完成后启动 `my4`
+
+### 现象
+- 已回读最新的 `task_plan.md`、`notes.md`、`WORKLOG.md`、`LATER_PLANS.md`、`EPIPHANY_LOG.md`、`ERRORFIX.md`.
+- 当前接力仍由等待会话 `97910` 负责.
+- 最新动态轮询输出显示:
+  - `[wait 2026-03-27 01:59:52 UTC] demo_data/my10(pid=475666) 仍在运行, 继续等待...`
+- 目前还没有看到 `my10` 退出后的 `manifest` 二次确认结果.
+
+### 当前假设
+- 主假设: `my10` 仍处于正常运行中的后半段镜头生成阶段, 因此接力尚未放行.
+- 备选解释: `my10` 可能已经接近结束, 但当前轮询窗口还没有刷新到下一次状态切换.
+
+### 验证计划
+- 继续轮询等待会话 `97910`.
+- 一旦出现 `start ... demo_data/my10 已完成, 开始启动 demo_data/my4`, 立刻核对:
+  - 真实进程树里是否已有 `demo_data/my4`
+  - `demo_data/my4/manifest.json` 是否创建
+  - `demo_data/my4` 是否开始落盘共享产物
+- 如果 `my10` 退出但 `manifest.status != completed`, 立即停止接力判断并按异常场景汇报.
+
+### 状态
+**目前在接力监控阶段**
+- `my10` 仍在运行.
+- 下一步继续等待 `97910` 给出放行或异常结果.
+
+## [2026-03-27 02:25:53 UTC] `my10 -> my4` 接力仍在等待, 已确认自动启动门闩正常挂起
+
+### 现象
+- 等待会话 `97910` 持续输出:
+  - `[wait 2026-03-27 02:25:53 UTC] demo_data/my10(pid=475666) 仍在运行, 继续等待...`
+- `demo_data/my10/manifest.json` 的当前关键状态为:
+  - 顶层 `status = running`
+  - `10 left_down`: `trajectory_assets_status = completed`, `render_status = completed`, `generation_status = pending`
+  - `11 right_down`: `trajectory_assets_status = pending`, `render_status = pending`, `generation_status = pending`
+- 真实进程树仍存在:
+  - `single_image_multi_trajectory.py` 主进程 `475666`
+  - `torchrun --nproc-per-node=2` 子进程 `611884`
+  - 两个 `versecrafter_inference.py` worker `611886` / `611887`
+- 动态资源证据:
+  - `nvidia-smi` 显示两张卡都处于 `100%` 利用率
+  - 显存均为 `75117 / 81920 MiB`
+- 10 号镜头目录下已存在:
+  - `custom_3D_gaussian_trajectory.json`
+  - `custom_camera_trajectory.npz`
+  - `rendering_4D_maps/*.mp4`
+- 但 `demo_data/my10/10/generated_videos` 目前仍未见成品文件落盘.
+
+### 当前假设
+- 主假设: `my10` 当前仍在 10 号镜头的最终生成阶段, 只是耗时较长, 尚未完成到可切换 11 号镜头或结束批处理的时点.
+- 备选解释: 也可能在最终视频落盘前存在较长尾声阶段, 导致 `generated_videos` 暂时为空, 但并未影响计算继续进行.
+
+### 已验证结论
+- 目前没有证据表明 `my10` 已完成.
+- 目前也没有证据表明它已经异常卡死.
+- `my4` 的自动启动门闩已经挂好, 但尚未被放行.
+
+### 状态
+**目前仍在接力等待阶段**
+- 继续等待 `my10` 退出且 `manifest.status = completed`.
+- 满足条件后会自动启动 `demo_data/my4`.
