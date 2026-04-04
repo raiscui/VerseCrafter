@@ -117,12 +117,12 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
     ),
     TrajectoryPreset(
         6,
-        "clockwise_0.65",
-        (0.4, 0.6),
+        "clockwise_elliptical",
+        (0.5, 0.8),
         "orbit",
-        "Camera is orbiting clockwise around the scene with a tighter radius",
-        orbit_radius_scale=0.65,
-        orbit_direction=0.8,
+        "The camera orbits the scene clockwise with an elliptical radius.",
+        orbit_radius_scale=1.2,
+        orbit_direction=0.6,
     ),
     TrajectoryPreset(
         7,
