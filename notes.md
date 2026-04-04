@@ -218,6 +218,165 @@
   - `torch.__version__ = 2.3.1`
   - `torch.version.cuda = 12.1`
   - `torch.cuda.is_available() = True`
+
+## [2026-03-29 17:41:11 UTC] `nt1 -> nt2` 接力监督启动记录
+
+### 现象
+- 用户要求先监督当前 `demo_data/nt1` 的生成进度.
+- 等 `nt1` 完成后, 立刻执行新的 `demo_data/nt2` 批处理命令.
+
+### 当前假设
+- 主假设: 当前正在运行的 `nt1` 就是用户要我接力的那一轮, 并且还没有完成.
+- 备选解释: 也可能存在旧的残留等待脚本或孤儿子进程, 导致看起来像“还在跑”.
+
+### 已做的最小验证
+- 动态证据:
+  - `ps -eo pid,ppid,etime,stat,cmd | rg "single_image_multi_trajectory|nt1|nt2|inference"`
+  - 返回真实主进程:
+    - `173232 pixi run python inference/single_image_multi_trajectory.py ... --output_root demo_data/nt1`
+    - `173293 /workspace/VerseCrafter/.pixi/envs/default/bin/python inference/single_image_multi_trajectory.py ... --output_root demo_data/nt1`
+  - 当前 Step 6 中间层:
+    - `242526 torchrun --nproc-per-node=2 inference/versecrafter_inference.py ... --save_path demo_data/nt1/9/generated_videos`
+  - 当前双 worker:
+    - `242528 ... inference/versecrafter_inference.py ... demo_data/nt1/9/generated_videos`
+    - `242529 ... inference/versecrafter_inference.py ... demo_data/nt1/9/generated_videos`
+
+### 当前结论
+- 已验证结论:
+  - 当前 `nt1` 确实还在运行, 不是空等.
+  - 当前已经进入 9 号镜头的双卡生成阶段.
+- 仍待继续确认:
+  - `nt1` 何时完成整个批处理.
+  - 完成后 `nt2` 是否能无缝接上并顺利进入共享步骤或生成步骤.
+
+## [2026-03-29 17:50:34 UTC] `nt1` 监督过程中的额外动态证据
+
+### 现象
+- `demo_data/nt1/manifest.json` 顶层 `updated_at` 停在 `2026-03-29T17:36:34.104398+00:00`.
+- 但同一时间段内, `242528` / `242529` 两个 worker 一直维持:
+  - `%CPU ≈ 101`
+  - GPU 利用率 `100%`
+  - 显存 `75117 MiB`
+
+### 当前假设
+- 主假设: Step 6 进行中时, `manifest` 不会持续回写心跳.
+- 备选解释: 也可能是回写逻辑只在镜头完成后才统一更新.
+
+### 额外验证
+- `demo_data/nt1/7/generated_videos/generated_video_0.mp4`
+  - 落盘时间: `17:00:28`
+  - 对应控制图完成时间: `16:26:38`
+  - Step 6 约耗时 `33-34` 分钟
+- `demo_data/nt1/8/generated_videos/generated_video_0.mp4`
+  - 落盘时间: `17:35:20`
+  - 对应控制图完成时间: `17:01:40`
+  - Step 6 约耗时 `33-34` 分钟
+- `demo_data/nt1/9/generated_videos/` 当前仍为空, 与“9 号镜头还在生成”的现场观察一致.
+
+### 当前结论
+- 已验证结论:
+  - 这条链路里, `manifest` 不是运行中心跳源.
+  - 监督 `nt1` 时应优先看:
+    - 主进程是否仍存活
+    - `torchrun` / worker 是否仍在
+    - GPU 占用是否持续
+    - `generated_videos` 最终产物是否出现
+- 推测:
+  - 如果 9 号镜头维持与 7、8 号相近耗时, 它更可能在 `18:10` 左右完成, 而不是已经卡住.
+
+## [2026-03-29 17:56:32 UTC] 后台门闩挂载验证
+
+### 现象
+- 继续在当前对话里同步等待 `nt1 -> nt2` 接力, 预计还需超过 1 小时.
+- 需要把监督逻辑脱离当前会话, 否则对话结束后无法继续自动接力.
+
+### 主假设
+- 主假设: 只用普通 `nohup ... &` 还不够稳, 进程可能仍受当前命令会话生命周期影响.
+- 备选解释: 也可能是后台脚本本身有语法或运行期错误.
+
+### 验证
+- 静态证据:
+  - 新建 `demo_data/nt1_to_nt2_handoff.sh`
+  - `bash -n demo_data/nt1_to_nt2_handoff.sh` 通过
+- 动态证据1:
+  - 普通 `nohup` 首次启动后, `runner.out` 只有:
+    - `handoff-script-start nt1_pid=173293`
+  - `pgrep -af 'nt1_to_nt2_handoff.sh|nt2_handoff'` 无存活进程
+- 动态证据2:
+  - `timeout 8s bash -x demo_data/nt1_to_nt2_handoff.sh 173293`
+  - 已确认脚本逻辑本身正常, 能进入:
+    - `kill -0 173293`
+    - `print_nt1_summary`
+    - `nvidia-smi`
+    - `sleep 30`
+- 动态证据3:
+  - 改为 `setsid nohup ... </dev/null >/... 2>&1 &` 后, 新 PID `252616`
+  - `ps -p 252616 -o pid,ppid,pgid,sid,etime,stat,cmd`
+    - `PPID = 1`
+    - `PGID = SID = 252616`
+  - `runner.out` 已连续写入:
+    - `17:55:07 nt1-alive`
+    - `17:55:37 nt1-alive`
+
+### 当前结论
+- 已验证结论:
+  - 脚本逻辑本身没问题.
+  - 在当前工具环境里, 想让后台监督真正脱离会话, 需要使用:
+    - `setsid`
+    - `nohup`
+    - `</dev/null`
+  - 现在这条后台门闩已经独立存活, 后续会继续等待 `nt1` 并接力启动 `nt2`.
+
+## [2026-03-30 00:56:52 UTC] `nt2 -> nt3` 接力监督启动记录
+
+### 现象
+- 上一轮后台门闩已经把 `nt1` 接到了 `nt2`.
+- 当前真实运行中的批处理不再是 `nt1`, 而是 `demo_data/nt2`.
+- 用户现在要求继续监督当前生成程序, 并在其完成后自动启动 `demo_data/nt3`.
+
+### 已做的最小验证
+- 动态证据:
+  - `demo_data/nt1/manifest.json` 顶层 `status = completed`
+  - 当前活跃主进程:
+    - `276596 /workspace/VerseCrafter/.pixi/envs/default/bin/python inference/single_image_multi_trajectory.py ... --output_root demo_data/nt2`
+  - 当前 Step 6 中间层:
+    - `334719 torchrun --nproc-per-node=2 ... --save_path demo_data/nt2/9/generated_videos`
+  - 当前双 worker:
+    - `334721 ... demo_data/nt2/9/generated_videos`
+    - `334722 ... demo_data/nt2/9/generated_videos`
+- `demo_data/nt2/manifest.json` 当前摘要:
+  - `status = running`
+  - `generation_completed = 0-8`
+  - `inflight = 9`
+  - `pending = 10, 11`
+- `demo_data/nt3` 当前只有:
+  - `demo_data/nt3/c.png`
+  - 尚无 `manifest.json`
+
+### 处置
+- 没有去热修改仍在运行的 `demo_data/nt1_to_nt2_handoff.sh`.
+- 新建独立脚本:
+  - `demo_data/nt2_to_nt3_handoff.sh`
+- 挂载方式继续采用上一轮已验证可靠的:
+  - `setsid`
+  - `nohup`
+  - `</dev/null`
+
+### 动态验证
+- 后台门闩 PID:
+  - `340573`
+- `ps -p 340573 -o pid,ppid,pgid,sid,etime,stat,cmd`
+  - `PPID = 1`
+  - `PGID = SID = 340573`
+- `demo_data/nt3_handoff_runner.out` 已连续写入:
+  - `00:56:12 nt2-alive`
+  - `00:56:42 nt2-alive`
+
+### 当前结论
+- 已验证结论:
+  - 当前真正需要监督的是 `nt2`, 不是旧的 `nt1`.
+  - 新的 `nt2 -> nt3` 门闩已经独立存活.
+  - 后续它会在 `nt2` 完成后自动启动用户提供的 `nt3` 命令.
   - `pytorch3d.__file__ = /workspace/VerseCrafter/.pixi/envs/default/lib/python3.11/site-packages/pytorch3d/__init__.py`
   - `pytorch3d.__version__ = 0.7.9`
 - 补充动态证据3: 在仓库根目录直接用系统 `python3`
@@ -284,3 +443,46 @@
     - orbit 变体测试忽略了 `orbit_direction`
     - `left_down` / `right_down` 仍按旧的 `0.3` 垂直比例断言
   - 已一并修正为匹配当前真实元数据语义
+
+## [2026-03-29 15:28:46 UTC] 六文件摘要(用于决定如何沉淀知识)
+
+- 任务目标(task_plan.md):
+  - 近期上下文主要围绕 `single_image_multi_trajectory.py` 的多轨迹批处理, 双卡验证, 自动接力, 离线运行, 轨迹语义修复, 以及完成后自动关机.
+- 关键决定(task_plan.md):
+  - 多卡是否真的生效, 要用真实进程 / `torchrun` / `manifest` 三者交叉确认.
+  - 自动接力和自动关机都不能再依赖命令行模糊匹配, 要改成 PID 驱动并结合 `manifest` 完成态.
+  - 当前 `task_plan.md` 已超过 1000 行, 需要在本轮持续学习后续档.
+- 关键发现(notes.md):
+  - `pgrep -af 'single_image_multi_trajectory.py.*demo_data/my6'` 会把等待脚本自己匹配进去, 导致“目标已结束但永远不放行”.
+  - 在仓库根目录直接用系统 `python3` 检查 `pytorch3d` 时, 顶层源码目录会伪装成可导入模块, 容易误判安装状态.
+  - `left_up` / `right_up` 的回归说明, 轨迹 preset 需要把“位移语义”和“注视语义”分开建模.
+- 实际变更(WORKLOG.md):
+  - 已完成对多卡排查, 离线缓存复用, 自动接力失败原因, `pixi` 真实版本核对, 注视目标偏移修复, 异常中断清理, 以及自动关机门闩的落盘记录.
+- 暂缓事项 / 后续方向(LATER_PLANS.md):
+  - 仍值得后续补强的方向有两个:
+    - 在批处理入口显式打印并落盘“最终生效参数”.
+    - 在父进程异常退出时回收 Step 6 worker, 并把 `manifest` 写成明确的中止状态.
+- 错误与根因(ERRORFIX.md):
+  - “8 号镜头只见 1 张 GPU 工作”不是多卡逻辑失效, 而是那一轮实际就跑成了单卡.
+  - “`my6` 完成但 `my7` 没接上”不是推理链路故障, 而是 `pgrep -af` 自匹配导致等待脚本永远不放行.
+- 重大风险 / 灾难点 / 重要规律(EPIPHANY_LOG.md):
+  - 长链路批处理一旦存在自动接力, “当前真正活着的是谁”必须重新用真实进程和 `manifest` 核对, 不能沿用旧心智模型.
+  - 只看聊天里复制的命令, 不足以证明系统里真的按那条命令运行.
+- 可复用点候选:
+  - shell 等待脚本里, 不要把 `pgrep -af` 当成完成判据. 对非子进程等待, 优先记录目标 PID 并用 `kill -0` 轮询, 再配合状态文件二次确认.
+  - 这个仓库里做依赖版本核对时, 必须优先使用 `pixi run python` / `pip show`, 不要在仓库根目录信任系统 `python3 import pytorch3d`.
+  - 轨迹 preset 的建模和测试, 要同时覆盖“相机走向哪里”和“相机看向哪里”.
+- 最适合写到哪里:
+  - shell 等待自匹配问题 -> 新的跨项目 `self-learning.*` skill.
+  - `pixi` / `pytorch3d` 版本核对约定 -> 根 `AGENTS.md` 和 `README.md`.
+  - 自动接力与异常回收的后续工程 -> 继续保留在 `LATER_PLANS.md`.
+- 需要同步的现有 `docs/` / `specs/` / plan 文档:
+  - 仓库中没有 `docs/` 或 `specs/` 目录.
+  - 已检查根 `AGENTS.md`, `README.md`, `task_plan.md`, `LATER_PLANS.md`.
+- 是否需要新增或更新 `docs/` / `specs` / plan 文档:
+  - 是.
+  - 更新 `AGENTS.md` 和 `README.md`, 记录 `pixi` 环境版本核对约定.
+  - `LATER_PLANS.md` 已覆盖未落地的流程改良项, 本轮无需新增计划条目.
+- 是否提取/更新 skill:
+  - 是.
+  - 新增 `self-learning.shell-pgrep-self-match-wait-loop`, 因为它是跨项目可复用, 且这次已经有静态和动态证据闭环.

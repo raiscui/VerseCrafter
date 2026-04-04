@@ -230,7 +230,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --input_image_path 'demo_data/nt1/a.png' \
   --output_root demo_data/nt1 \
   --transformer_path model/VerseCrafter \
-  --prompt "A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground., high detail." \
+  --prompt "An exhibition hall showcasing aircraft and automobiles.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
   --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
