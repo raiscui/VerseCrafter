@@ -321,3 +321,83 @@
 - 这轮最值得固化的两个点很明确:
   - 这个仓库的依赖版本核对必须站在 `pixi` 环境里完成.
   - shell 编排里只靠 `pgrep -af` 等待进程, 风险比看上去大得多.
+
+## [2026-04-05 06:11:21 UTC] 任务名称: 分析 `single_image_multi_trajectory.py` 生成视频开头几帧抖动的原因
+
+### 任务内容
+- 排查用户给定 `demo_data/nt1` 推理命令中, 为什么生成视频最开始几帧容易跳动或质量差.
+- 不先改代码, 先区分问题发生在 control map 阶段还是最终视频扩散阶段.
+
+### 完成过程
+- 先回读六文件上下文与仓库约束, 把本轮主假设和备选假设写入 `task_plan.md`.
+- 再逐段检查:
+  - `inference/versecrafter_inference.py`
+  - `versecrafter/pipeline/pipeline_wan_versecrafter.py`
+  - `inference/single_image_multi_trajectory_lib.py`
+- 从代码里确认 3 个关键事实:
+  - 第一帧 mask 被清零
+  - 第一条 RGB control 的第 0 帧会被替换成原始输入图
+  - 当前命令没有额外的 `subject_ref_images` 多帧参考锚定
+- 然后直接读取 `demo_data/nt1` 已生成好的 control 视频与最终视频, 对前几帧做像素差统计.
+- 最终确认:
+  - control 视频自己很多轨迹的 `0 -> 1` 变化并不大
+  - 但“输入图 -> 渲染 control 第 1 帧”的差值, 与“生成视频第 0 -> 1 帧”的跳变高度相关
+  - 相关系数达到 `0.9828`
+
+### 总结感悟
+- 这次问题的关键, 不是“轨迹有没有动”, 而是“模型开场吃到的条件序列有没有断层”.
+- 单帧替换虽然能让第 0 帧更像原图, 但如果第 1 帧马上切进另一个图像域, 抖动会被集中到开头暴露出来.
+- 以后分析视频生成的首帧问题, 最值得先看的不是最终视频本身, 而是“实际喂给模型的条件序列”有没有在 `0 -> 1` 帧发生硬切换.
+
+## [2026-04-05 06:44:34 UTC] 任务名称: 溯源 `008693b52aa74367afb34d183046fecf88100bdc` 与首帧特判逻辑
+
+### 任务内容
+- 核对用户指定的 commit 是否涉及我刚才分析到的首帧特判逻辑.
+- 判断这段逻辑究竟是 raiscui 后来改出来的, 还是更早就已经存在.
+
+### 完成过程
+- 先验证 `008693b52aa74367afb34d183046fecf88100bdc` 的改动范围.
+- 确认它只改了 `README.md`, 没有改推理代码.
+- 再对 `inference/versecrafter_inference.py` 相关行做:
+  - `git blame`
+  - `git log -S`
+  - `git diff 5f599ed..d4261ba`
+- 最终确认:
+  - `input_video_mask[:,:,0] = 0.0`
+  - `control_videos[0][:,:,0] = img_latent.squeeze(2)`
+  两行都来自 `5f599ed` 初始提交.
+- raiscui 的 `d4261ba` 虽然改了该文件, 但改的是 `negative_prompt`、`gpu_memory_mode`、`fsdp_dit`、`teacache_offload`, 没动这段首帧特判.
+
+### 总结感悟
+- 在这种“怀疑某个 commit 引入现象”的排查里, 先看目标 commit 的改动范围很重要.
+- 如果目标 commit 根本没碰相关文件, 就不能把现象归到它头上.
+- 行级 blame 加 `git log -S` 的组合, 很适合确认某段关键逻辑是不是后来引入的.
+
+## [2026-04-05 06:50:15 UTC] 任务名称: 排序当前命令里把首帧老问题放大的因素
+
+### 任务内容
+- 在确认首帧特判是旧逻辑之后, 继续判断为什么它在当前多轨迹命令里更明显.
+- 重点核查:
+  - raiscui 引入的多轨迹轨迹起步方式
+  - `camera_only`
+  - `fsdp_dit`
+  - `teacache_offload`
+  - `negative_prompt`
+
+### 完成过程
+- 先回到多轨迹代码, 确认轨迹公式从第 1 帧就立即开始正常位移, 没有开场 hold/ease-in.
+- 再查看 `camera_only` 语义, 确认它会:
+  - 跳过前景分割
+  - 跳过 Gaussian 拟合
+  - 把整张图当 rigid background
+- 然后对多个历史 `camera_only=True` 样本做跨样本前两帧统计.
+- 得到更强动态证据:
+  - `input -> ctrl1` 与 `gen0 -> gen1` 的相关系数达到 `0.9951`
+- 最后核对 `fsdp_dit` / `teacache_offload` 的实现位置和注释, 确认它们更偏向内存与缓存策略, 目前缺少“专门恶化首帧”的证据.
+
+### 总结感悟
+- 老问题是否被放大, 最好不要靠“看起来最可疑的参数名”判断.
+- 这次真正该抓的量, 不是某个开关开没开, 而是“输入图和第 1 帧 render 到底差多大”.
+- 对当前这条命令, 更准确的表述是:
+  - raiscui 没引入首帧特判本身
+  - 但 raiscui 引入的多轨迹 + `camera_only` 使用方式, 更容易把旧问题暴露出来

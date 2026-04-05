@@ -15,3 +15,12 @@
   - 中断/异常退出时把 `manifest` 更新为明确的中止状态, 而不是一直保留 `running`
   - 提供一个官方的“停止当前批处理”命令或脚本, 避免手动按 PID 清理
 - 价值: 能减少“GPU 还在跑, 但批处理主进程已经没了”这类误导场景.
+
+## [2026-04-05 06:11:21 UTC] 平滑 `single_image_multi_trajectory.py` 生成视频的开头几帧
+- 现状: `versecrafter_inference.py` 会把第一路 RGB control 的第 0 帧替换成原始输入图, 但第 1 帧立即切到渲染 control.
+- 动态证据: 在 `demo_data/nt1`, `input -> ctrl1` 与 `gen0 -> gen1` 的相关系数达到 `0.9828`, 说明开头抖动和这段条件断层高度相关.
+- 建议: 后续实现时优先比较这 3 种方案:
+  - 前 `N` 帧 hold/ease-in 轨迹, 降低开场真实视差
+  - 用输入图对前 `N` 帧 RGB control 做渐变混合, 不只替换第 0 帧
+  - 暴露 `subject_ref_images` 或等价参考图路径, 给 GeoAda 更强的多帧参考锚点
+- 价值: 能直接改善“第一秒不稳, 后面正常”的观感问题.

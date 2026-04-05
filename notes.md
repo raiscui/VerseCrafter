@@ -486,3 +486,172 @@
 - 是否提取/更新 skill:
   - 是.
   - 新增 `self-learning.shell-pgrep-self-match-wait-loop`, 因为它是跨项目可复用, 且这次已经有静态和动态证据闭环.
+
+## [2026-04-05 06:11:21 UTC] `nt1` 视频最开始几帧跳动/质量差原因排查
+
+### 现象
+- 用户给出的 `single_image_multi_trajectory.py` 命令生成视频时, 最开始几帧容易出现跳动或质量明显差于后续帧.
+- 这类问题不能直接说成“轨迹错了”或“模型坏了”, 需要先确认异常发生在控制图阶段还是最终扩散阶段.
+
+### 主假设
+- 主假设: 开头几帧的不稳定, 主要来自最终视频扩散阶段的首帧锚定方式.
+- 更具体地说, 当前实现会把第一路 RGB control 的第 0 帧强行换成原始输入图, 但第 1 帧仍然直接使用渲染控制图.
+- 如果“原图”和“渲染图第 1 帧”之间域差太大, 模型开场就会遇到一个很陡的条件跳变.
+
+### 备选假设
+- 备选假设: 相机轨迹或 control map 在第 0 -> 1 帧本身就不平滑, 所以前几帧抖动是前置资产阶段造成的.
+
+### 静态证据
+- `inference/versecrafter_inference.py`
+  - `input_video_mask[:,:,0] = 0.0`
+  - `control_videos[0][:,:,0] = img_latent.squeeze(2)`
+  说明推理时确实对第 0 帧做了特判.
+- `versecrafter/pipeline/pipeline_wan_versecrafter.py`
+  - `geoada_encode_multi_frames(...)` 只有在 `ref_images` 不为 `None` 时, 才会额外 prepend 参考图 latent.
+  - 当前这条命令没有传 `subject_ref_images`, 所以并没有“多帧强参考图”这层更稳的锚定.
+- `inference/single_image_multi_trajectory_lib.py`
+  - 轨迹从 `frame_index = 0` 开始立即进入正常位移公式, 并没有开场 hold 住几帧.
+  - 线性位移: `scalar = frame_index * movement_distance * translation_reference_depth / num_frames`
+  - orbit 位移: `theta = ... * frame_index / (num_frames - 1)`
+
+### 动态证据
+- 我对 `demo_data/nt1` 已完成轨迹的 `background_RGB.mp4` 与 `generated_video_0.mp4` 做了前几帧像素差统计.
+- 关键比较不是“渲染 control 的 0->1”, 而是“实际喂给模型的第 0 帧输入图 -> 第 1 帧渲染 control”.
+- 代表性结果:
+  - 轨迹 `0(left)`: `input -> ctrl1 = 22.56`, `gen0 -> gen1 = 22.68`
+  - 轨迹 `1(right)`: `input -> ctrl1 = 22.79`, `gen0 -> gen1 = 22.03`
+  - 轨迹 `8(left_up)`: `input -> ctrl1 = 31.22`, `gen0 -> gen1 = 26.00`
+  - 对比同一轨迹原始 control 视频自身的 `ctrl0 -> ctrl1` 只有 `3.38 / 3.33 / 4.28`
+- 对 `nt1` 的 11 条已完成轨迹计算后:
+  - `input -> ctrl1` 与 `gen0 -> gen1` 的相关系数为 `0.9828`
+
+### 已验证结论
+- 备选假设不成立为主因:
+  - control 视频自身的 `0 -> 1` 在很多轨迹里并不大, 不能单独解释生成视频开头的巨大跳变.
+- 当前更强的已验证结论是:
+  - 问题主要出在最终生成阶段的“首帧真图锚定 + 第 1 帧立刻切到渲染 control”这个条件断层.
+  - 轨迹从第 1 帧就开始运动, 又进一步放大了这种断层.
+  - 因为没有额外的 `subject_ref_images` 多帧参考锚定, 模型只能靠这一个首帧替换来维持一致性, 所以前几帧更容易抖.
+
+### 当前判断
+- 这更像是当前 I2V/control 设计的边界问题, 不是单纯某个 preset 写错.
+- 对开头几帧最有效的改善方向, 应优先考虑:
+  - 让前几帧做 ease-in / hold, 不要第 1 帧就切出明显视差
+  - 不只替换第 0 帧, 而是把输入图逐步混到前 `N` 帧 control 中
+  - 或补一条真正的参考图 latent 路径, 而不是只靠第 0 帧替换
+
+## [2026-04-05 06:44:34 UTC] `008693b52aa74367afb34d183046fecf88100bdc` 与首帧特判历史溯源
+
+### 现象
+- 用户要求确认 `008693b52aa74367afb34d183046fecf88100bdc` 是否和“第 0 帧特殊处理”有关.
+- 还要判断这段逻辑是 raiscui 后来改出来的, 还是更早就已经存在.
+
+### 静态证据
+- `git show --stat --summary 008693b52aa74367afb34d183046fecf88100bdc`
+  - 结果显示该 commit 只有:
+    - `README.md | 19 insertions`
+  - 没有改 `inference/versecrafter_inference.py`
+- `git blame -L 403,419 inference/versecrafter_inference.py`
+  - `input_video_mask[:,:,0] = 0.0`
+  - `control_videos[0][:,:,0] = img_latent.squeeze(2)`
+  这两行都归属于 `5f599ed6bedbffb1136d18fdf6c4fd113c96cc85`
+- `git log -S 'control_videos[0][:,:,0] = img_latent.squeeze(2)'`
+  - 首次出现提交也是 `5f599ed...`
+- `git log -S 'input_video_mask[:,:,0] = 0.0'`
+  - 首次出现提交同样是 `5f599ed...`
+
+### 历史对比证据
+- `git diff 5f599ed..d4261ba -- inference/versecrafter_inference.py`
+  - raiscui 的 `d4261ba5057be1f0fcf4a05de7529310349199c5` 的确改过这个文件
+  - 但改动集中在:
+    - `--negative_prompt`
+    - `--gpu_memory_mode`
+    - `fsdp_dit`
+    - `teacache_offload`
+  - 没有改动首帧特判这段逻辑
+- 直接查看 `5f599ed` 版本文件对应片段, 已经能看到:
+  - `input_video_mask[:,:,0] = 0.0`
+  - `control_videos[0][:,:,0] = img_latent.squeeze(2)`
+
+### 已验证结论
+- `008693b52aa74367afb34d183046fecf88100bdc` 与这段首帧特判逻辑无关.
+- 这段逻辑不是 raiscui 后来引入的.
+- 它在 `5f599ed6bedbffb1136d18fdf6c4fd113c96cc85` 初始提交里就已经存在.
+- raiscui 后续提交虽然改过 `inference/versecrafter_inference.py`, 但没有碰这段代码.
+
+## [2026-04-05 06:50:15 UTC] “为什么现在更明显” 的放大因素排序
+
+### 现象
+- 已确认首帧特判本身是旧逻辑.
+- 当前需要进一步判断: 为什么在用户这条 `single_image_multi_trajectory.py --camera_only` 命令里, 这个老问题会更明显.
+
+### 候选因素逐项验证
+
+#### 候选A: 多轨迹链路从第 1 帧立即开始运动
+- 静态证据:
+  - `single_image_multi_trajectory_lib.py` 的线性轨迹:
+    - `scalar = frame_index * movement_distance * translation_reference_depth / num_frames`
+  - orbit 轨迹:
+    - `theta = ... * frame_index / (num_frames - 1)`
+  - 说明第 0 帧静止, 第 1 帧立刻进入正常位移, 没有开场 hold/ease-in.
+- 历史证据:
+  - `inference/single_image_multi_trajectory.py` 与 `inference/single_image_multi_trajectory_lib.py` 都是 raiscui 的 `d4261ba...` 新增文件.
+- 动态证据:
+  - 在 `nt1` 里, 左移/右移/左上这类“第 1 帧视差更明显”的轨迹, `gen0 -> gen1` 跳变最大.
+  - 这和之前统计到的 `input -> ctrl1` 强相关吻合.
+- 结论:
+  - 这是当前最强的放大器.
+
+#### 候选B: `camera_only` 把整张图都当 rigid background
+- 静态证据:
+  - `single_image_multi_trajectory.py` 明确写着:
+    - `Disable foreground segmentation / Gaussian fitting and treat the whole image as rigid background`
+    - `keep mask dir empty so the whole image becomes rigid background`
+  - `build_background()` 在 mask 为空时, 会把整张图都并入背景点云.
+  - 同时 Gaussian 分支变成 `num_objects = 0`, 对应 `3D_gaussian_RGB` / depth 约束为空.
+- 动态证据:
+  - 当前工作区里能直接比较到的批处理样本几乎全是 `camera_only=True`.
+  - 在这些样本里, `input -> ctrl1` 与 `gen0 -> gen1` 的跨样本相关系数仍达到 `0.9951`.
+  - 说明 `camera_only` 不是单独的充分条件, 因为同样都是 `camera_only`, 严重程度差异依然很大.
+- 当前判断:
+  - `camera_only` 更像次级放大器.
+  - 它会让“render 第 1 帧”和“原图”之间的域差更依赖背景重建质量, 在近景物体多、遮挡强的场景更容易把老问题放大.
+  - 但现有证据还不足以说“只要 camera_only 就一定明显”.
+
+#### 候选C: `fsdp_dit=True` / `teacache_offload=True`
+- 静态证据:
+  - `fsdp_dit` 的注释是“Use FSDP to save more GPU memory in multi gpus”.
+  - `teacache_offload` 的注释是“offload TeaCache tensors to cpu to save a little bit of GPU memory”.
+  - `TeaCache` 启用时还显式:
+    - `skip the first {num_skip_start_steps} steps`
+  - `wan_transformer3d.py` 里 `teacache.cnt < teacache.num_skip_start_steps` 时, 会强制 `should_calc = True`.
+- 当前判断:
+  - 这两项更像部署/缓存策略.
+  - 现有静态证据看不出它们会专门把“视频前几帧”变差.
+  - 尤其 `teacache_offload` 只改缓存放在哪, 没改阈值和前几步跳过逻辑.
+- 结论:
+  - 目前没有足够证据把它们列为主要放大器.
+
+#### 候选D: `negative_prompt`
+- 静态证据:
+  - raiscui 的改动只是让 `negative_prompt` 可以从命令行传入.
+  - 当前用户命令本身显式提供了 `--negative_prompt`, 所以现在实际生效的是用户自己的文本, 不是 raiscui 改过的默认值.
+- 当前判断:
+  - 负面提示词当然会影响整体风格和稳定性偏好.
+  - 但目前没有证据显示它是“开头第 0 -> 1 帧硬切换”的主因.
+
+### 综合结论
+- 最强放大器:
+  - raiscui 引入的多轨迹用法本身, 尤其是“第 1 帧立刻运动, 没有开场 hold/ease-in”.
+- 次级放大器:
+  - `camera_only`, 因为它把场景整体简化成 rigid background, 会在某些场景显著增大 `input -> ctrl1` 的 render 域差.
+- 目前证据弱:
+  - `fsdp_dit`
+  - `teacache_offload`
+  - `negative_prompt` 支持本身
+
+### 最终判断
+- 更准确的说法不是“raiscui 改坏了首帧特判”.
+- 而是:
+  - 老的首帧特判一直在.
+  - raiscui 新增的多轨迹 + `camera_only` 使用场景, 更容易把这个老问题暴露和放大.
