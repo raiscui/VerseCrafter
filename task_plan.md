@@ -1,12 +1,17 @@
 # 任务计划: 持续学习沉淀与续档
+# 任务计划: 默认主线上下文索引
 
 ## [2026-03-29 15:28:46 UTC] 新任务启动
+## [2026-03-25 17:26:30 UTC] [Session ID: unknown] [记录类型]: 默认六文件续档并启用 Git 网络排查支线
 
 ### 目标
 - 回读六文件上下文, 提炼最近一轮工作里真正可复用的知识.
 - 把 repo-specific 约定同步到长期文档.
 - 把跨项目可复用的 shell 等待排障经验提炼成新的 `self-learning.*` skill.
 - 续档超过 1000 行的旧 `task_plan.md`.
+### 续档原因
+- 旧默认六文件已经累计较长, 其中旧 `task_plan.md` 超过 1000 行.
+- 已按项目规则续档到 `archive/default_history/`, 避免后续上下文继续膨胀.
 
 ### 阶段
 - [x] 阶段1: 列出并回读六文件
@@ -17,6 +22,12 @@
 ### 关键问题
 1. 哪些知识是这个仓库独有的长期约定, 应该写进项目文档.
 2. 哪些知识具有跨项目复用价值, 值得提炼成新的 `self-learning.*` skill.
+### 持续学习摘要
+- 已回读旧默认六文件中的近期 Git / 网络相关记录.
+- 当前可复用经验有 3 条:
+  - VS Code 注入的 `GIT_ASKPASS` 可能让 HTTPS `git push` / `git fetch` 表现出“像网络挂住”的假象.
+  - `git: 'remote-https' is not a git command` 在本项目里曾被验证为本地 Git helper 权限问题, 不是 GitHub 仓库不可达.
+  - 诊断 GitHub 连通性时, `GIT_TERMINAL_PROMPT=0` 与 `GIT_CURL_VERBOSE=1` 是最小而有效的证据采集组合.
 
 ### 备选方向
 - 方案A: 只把内容留在六文件里.

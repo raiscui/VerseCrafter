@@ -71,8 +71,30 @@ install-moge = "python -m pip install git+https://github.com/microsoft/MoGe.git"
 install-grounded-sam2 = "python -m pip install -e ./third_party/Grounded-SAM-2"
 install-grounding-dino = "python -m pip install --no-build-isolation -e ./third_party/Grounded-SAM-2/grounding_dino"
 
-# flash-attn 需要禁用 build isolation, 这里保留为显式初始化任务.
-install-flash-attn = "python -m pip install --no-build-isolation flash-attn"
+# flash-attn 默认只保留源码安装路径, 这里主动限流编译并发.
+# 默认至少预留 4 个 CPU, 避免 bootstrap 把整机打满.
+install-flash-attn = { cmd = ["bash", "-lc", """
+set -euo pipefail
+
+# 如果用户已经显式指定 MAX_JOBS, 则尊重手动覆盖.
+if [ -n "${MAX_JOBS:-}" ]; then
+  jobs="${MAX_JOBS}"
+  echo "[install-flash-attn] 使用外部指定的 MAX_JOBS=${jobs}"
+else
+  cpu_total="$(nproc)"
+  reserve="${FLASH_ATTN_RESERVED_CPUS:-4}"
+
+  if ! [[ "${reserve}" =~ ^[0-9]+$ ]]; then
+    echo "[install-flash-attn] FLASH_ATTN_RESERVED_CPUS 必须是非负整数, 当前值: ${reserve}" >&2
+    exit 1
+  fi
+
+  jobs=$(( cpu_total > reserve ? cpu_total - reserve : 1 ))
+  echo "[install-flash-attn] cpu_total=${cpu_total}, reserved=${reserve}, MAX_JOBS=${jobs}"
+fi
+
+MAX_JOBS="${jobs}" python -m pip install --no-build-isolation flash-attn
+"""] }
 
 # pytorch3d 仍按上游推荐从源码安装.
 # 这里避免使用 Pixi 默认 shell 不支持的 Bash `if`, 改成 and/or list.

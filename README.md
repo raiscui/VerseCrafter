@@ -82,6 +82,7 @@
 
    Notes:
    - The provided `pixi.toml` targets the Linux CUDA inference environment used by VerseCrafter.
+   - `install-flash-attn` now limits compile parallelism by default and keeps at least 4 CPU cores free. You can tune `FLASH_ATTN_RESERVED_CPUS` in `.envrc`, or override `MAX_JOBS` manually if you need a fixed build parallelism.
    - If you prefer not to open a shell, prefix later commands with `pixi run`, for example `pixi run python api_server.py --port 8188 --num_gpus 8`.
    - When checking installed package versions, stay inside Pixi. A plain system `python3` started from the repo root can import the local `pytorch3d/` source directory and falsely look like an installed package.
 
