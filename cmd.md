@@ -253,19 +253,43 @@ pixi run python inference/single_image_multi_trajectory.py \
 ```
 
 
+#### 单卡
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
-  --input_image_path 'demo_data/my7/d.png' \
-  --output_root demo_data/my7 \
+  --input_image_path 'demo_data/nt1/a.png' \
+  --output_root demo_data/nt1 \
   --transformer_path model/VerseCrafter \
-  --prompt "An exhibition hall showcasing aircraft and automobiles.There are some white lines on the ground.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+  --prompt "An exhibition hall showcasing aircraft and automobiles.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+  --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
+  --camera_only \
+  --moge_version v2 \
+  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+  --auto_center_depth_quantile 0.35 \
+  --translation_reference_depth_scale 0.95 \
+  --total_movement_distance_factor 1.0 \
+  --sample_size "720,1280" \
+  --num_inference_steps 60 \
+  --gpu_memory_mode model_cpu_offload \
+  --ulysses_degree 2 \
+  --ring_degree 1 \
+  --nproc_per_node 2 \
+  --guidance_scale 5.0 \
+  --seed 2025 \
+  --fps 24
+```
+```bash
+pixi run python inference/single_image_multi_trajectory.py \
+  --input_image_path 'demo_data/nt2/b.png' \
+  --output_root demo_data/nt2 \
+  --transformer_path model/VerseCrafter \
+  --prompt "An exhibition hall showcasing aircraft and automobiles.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
   --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
   --moge_pretrained Ruicheng/moge-2-vitl \
   --auto_center_depth_quantile 0.2 \
   --translation_reference_depth_scale 0.95 \
-  --total_movement_distance_factor 1.5 \
+  --total_movement_distance_factor 1.0 \
   --sample_size "720,1280" \
   --known_horizontal_fov_degrees 90 \
   --num_inference_steps 60 \
@@ -305,3 +329,28 @@ pixi run torchrun --nproc-per-node=2 inference/versecrafter_inference.py \
   --fps 16 \
   --gpu_memory_mode model_cpu_offload
 ```
+
+
+单卡 test
+
+pixi run python inference/single_image_multi_trajectory.py \
+  --input_image_path 'demo_data/nt1/a.png' \
+  --output_root demo_data/nt1 \
+  --transformer_path model/VerseCrafter \
+  --prompt "An exhibition hall showcasing aircraft and automobiles.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+  --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
+  --camera_only \
+  --moge_version v2 \
+  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+  --auto_center_depth_quantile 0.35 \
+  --translation_reference_depth_scale 0.95 \
+  --total_movement_distance_factor 1.0 \
+  --sample_size "720,1280" \
+  --num_inference_steps 10 \
+  --gpu_memory_mode model_cpu_offload \
+  --ulysses_degree 1 \
+  --ring_degree 1 \
+  --nproc_per_node 1 \
+  --guidance_scale 5.0 \
+  --seed 2025 \
+  --fps 24

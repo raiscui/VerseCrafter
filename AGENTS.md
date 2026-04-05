@@ -8,6 +8,8 @@ Create the environment with `conda create -n versecrafter python=3.11` and insta
 
 When working on `pixi run bootstrap` or `scripts/install_flash_attn.sh`, keep `flash-attn` on a single machine-specific CUDA arch only. Do not broaden it back to multiple default targets. Multi-arch `flash-attn` source builds take much longer and are treated as a known cause of long bootstrap stalls on this project.
 
+When working on `pixi run bootstrap` or `scripts/install_flash_attn.sh`, keep `flash-attn` on a single machine-specific CUDA arch only. Do not broaden it back to multiple default targets. Multi-arch `flash-attn` source builds take much longer and are treated as a known cause of long bootstrap stalls on this project.
+
 - Use the Pixi environment for dependency and version checks. From the repo root, plain `python3` can import the local `pytorch3d/` source tree and make it look installed when it is not. Prefer `pixi run python -m pip show ...`, `importlib.metadata.version(...)`, and checking that module `__file__` points into `site-packages`.
 - For chained `single_image_multi_trajectory.py` runs, prefer PID-driven waiting plus `manifest.json` completion checks over `pgrep -af ...` command-line matching. Full-command matching can hit the waiting script itself and block handoff forever.
 
