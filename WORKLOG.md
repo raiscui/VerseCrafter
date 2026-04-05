@@ -441,3 +441,46 @@
 ### 总结感悟
 - 这次修复最有价值的点, 是把“前几帧更稳”和“整段镜头节奏不被拖慢”同时满足了.
 - 对这类时序输入问题, 直接在输入条件层做平滑, 往往比继续堆 prompt 更稳.
+
+## [2026-04-05 11:44:38 UTC] 任务名称: 基于 3ds Max `FOV 90°` 调整单图多轨迹共享内参
+
+### 任务内容
+- 针对 `my` / `nt` 系列 3ds Max 渲染图, 让 `single_image_multi_trajectory.py` 不再继续使用 MoGE 预测内参作为唯一来源.
+- 在不改动深度图本身的前提下, 用已知 `horizontal FOV = 90°` 重建共享 `intrinsic`, 并让后续链路保持一致.
+
+### 完成过程
+- 先回读六文件上下文, 把这次主假设写进 `task_plan.md`:
+  - 已知真值相机输入不应再次被 MoGE 估计 K 主导
+  - 最佳覆盖点应放在 Step 1 之后、Step 2/3 之前
+- 再逐段核对:
+  - `moge-v2_infer.py`
+  - `single_image_multi_trajectory.py`
+  - `fit_3D_gaussian.py`
+  - `rendering_4D_control_maps.py`
+- 确认共享 `depth_intrinsics.npz` 的 `intrinsic` 会被整条几何链路复用后, 实现了两层改动:
+  - 在 `single_image_multi_trajectory_lib.py` 新增:
+    - `build_normalized_intrinsic_from_horizontal_fov`
+    - `sync_depth_intrinsics_npz`
+  - 在 `single_image_multi_trajectory.py` 新增:
+    - `my*` / `nt*` 自动识别
+    - `--known_horizontal_fov_degrees`
+    - `--disable_auto_known_intrinsics`
+    - Step 1 后自动同步共享 K
+    - 当共享 K 变化时, 禁止复用旧的 Gaussian / render / generated video
+- 最后补了单测和 smoke 测试, 并用 `demo_data/my7` 做了一次真实数值对比.
+
+### 验证结果
+- `pixi run python -m py_compile inference/single_image_multi_trajectory.py inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+  - `17 passed in 0.36s`
+- `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+  - `5 passed in 1.05s`
+- `demo_data/my7` 数值核对:
+  - 当前预测 `fx/fy ≈ 1185`
+  - `FOV 90°` 目标 `fx/fy = 1365`
+  - 说明覆盖后的 K 与当前预测值存在明确差异
+
+### 总结感悟
+- 对“已知真值相机”的输入, 最稳的做法不是继续相信模型预测 K, 而是尽早把真值塞回共享数据链.
+- 这次最关键的不是单纯改一个矩阵, 而是补上了“共享 K 改了以后, 下游旧产物必须失效”的约束.

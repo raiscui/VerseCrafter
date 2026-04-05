@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -22,6 +24,7 @@ from single_image_multi_trajectory_lib import (
     PRESET_INDEX_CHOICES,
     build_generation_prompt,
     build_empty_gaussian_params_payload,
+    build_normalized_intrinsic_from_horizontal_fov,
     convert_static_gaussian_json_to_trajectory,
     ensure_parent_dir,
     estimate_center_depth,
@@ -33,6 +36,7 @@ from single_image_multi_trajectory_lib import (
     load_depth_and_intrinsic,
     resolve_translation_reference_depth,
     select_preset_run_specs,
+    sync_depth_intrinsics_npz,
 )
 
 
@@ -41,6 +45,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FILE_NAME = "manifest.json"
+AUTO_KNOWN_3DSMAX_HORIZONTAL_FOV_DEGREES = 90.0
+AUTO_KNOWN_3DSMAX_SERIES_PATTERN = re.compile(r"^(my|nt)\d", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class IntrinsicOverridePlan:
+    """描述本次运行对共享内参的期望来源."""
+
+    mode: str
+    source: str
+    horizontal_fov_degrees: float | None = None
+    matched_series_name: str | None = None
 
 
 # ============================================================================
@@ -129,6 +145,8 @@ def build_manifest(
             "camera_only": args.camera_only,
             "moge_version": args.moge_version,
             "moge_pretrained": args.moge_pretrained,
+            "known_horizontal_fov_degrees": args.known_horizontal_fov_degrees,
+            "disable_auto_known_intrinsics": args.disable_auto_known_intrinsics,
             "device": args.device,
             "sample_size": args.sample_size,
             "num_inference_steps": args.num_inference_steps,
@@ -159,6 +177,11 @@ def build_manifest(
             "depth_npz": str((output_root / "shared" / "estimated_depth" / "depth_intrinsics.npz").resolve()),
             "gaussian_json": str((output_root / "shared" / "fitted_3D_gaussian" / "gaussian_params.json").resolve()),
             "depth_status": "pending",
+            "intrinsic_status": "pending",
+            "intrinsic_mode": "pending",
+            "intrinsic_source": "pending",
+            "effective_horizontal_fov_degrees": None,
+            "effective_intrinsic": None,
             "segmentation_status": "pending",
             "gaussian_status": "pending",
             "status": "pending",
@@ -189,6 +212,112 @@ def ensure_clean_path(path: Path, *, keep_if_missing: bool = True) -> None:
         shutil.rmtree(path)
     elif path.exists():
         path.unlink()
+
+
+def looks_like_known_3dsmax_series_name(name: str) -> bool:
+    """判断名字是否匹配当前已知的 3ds Max 渲染系列.
+
+    这里先只收 `my*` / `nt*` 这两类用户已经明确说明的系列.
+    用正则约束到“前缀 + 数字”, 避免把普通单词误识别进来.
+    """
+
+    return bool(AUTO_KNOWN_3DSMAX_SERIES_PATTERN.match(name.strip().lower()))
+
+
+def resolve_intrinsic_override_plan(
+    args: argparse.Namespace,
+    *,
+    output_root: Path,
+) -> IntrinsicOverridePlan:
+    """解析这次运行应使用哪种共享内参来源."""
+
+    if args.known_horizontal_fov_degrees is not None:
+        return IntrinsicOverridePlan(
+            mode="known_horizontal_fov",
+            source="cli",
+            horizontal_fov_degrees=float(args.known_horizontal_fov_degrees),
+        )
+
+    if args.disable_auto_known_intrinsics:
+        return IntrinsicOverridePlan(
+            mode="moge_predicted",
+            source="auto_disabled",
+        )
+
+    candidate_names = [
+        output_root.name,
+        Path(args.input_image_path).parent.name,
+    ]
+    for candidate_name in candidate_names:
+        if candidate_name and looks_like_known_3dsmax_series_name(candidate_name):
+            return IntrinsicOverridePlan(
+                mode="known_horizontal_fov",
+                source="auto_series_my_nt",
+                horizontal_fov_degrees=AUTO_KNOWN_3DSMAX_HORIZONTAL_FOV_DEGREES,
+                matched_series_name=candidate_name,
+            )
+
+    return IntrinsicOverridePlan(
+        mode="moge_predicted",
+        source="moge_default",
+    )
+
+
+def sync_shared_intrinsics(
+    *,
+    depth_npz_path: Path,
+    override_plan: IntrinsicOverridePlan,
+) -> dict[str, Any]:
+    """让共享 `depth_intrinsics.npz` 的 `intrinsic` 与本次策略保持一致."""
+
+    horizontal_fov_degrees = (
+        None
+        if override_plan.mode != "known_horizontal_fov"
+        else override_plan.horizontal_fov_degrees
+    )
+    sync_result = sync_depth_intrinsics_npz(
+        depth_npz_path,
+        horizontal_fov_degrees=horizontal_fov_degrees,
+    )
+    sync_result["plan_mode"] = override_plan.mode
+    sync_result["plan_source"] = override_plan.source
+    sync_result["matched_series_name"] = override_plan.matched_series_name
+    return sync_result
+
+
+def preview_shared_intrinsics(
+    *,
+    depth_npz_path: Path,
+    override_plan: IntrinsicOverridePlan,
+) -> dict[str, Any]:
+    """只预览共享内参是否会变化, 不落盘."""
+
+    depth_map, intrinsic = load_depth_and_intrinsic(depth_npz_path)
+    with np.load(depth_npz_path) as data:
+        stored_moge_intrinsic = (
+            None
+            if "moge_intrinsic" not in data.files
+            else np.asarray(data["moge_intrinsic"], dtype=np.float32)
+        )
+
+    if override_plan.mode == "known_horizontal_fov":
+        base_intrinsic = build_normalized_intrinsic_from_horizontal_fov(
+            image_width=int(depth_map.shape[-1]),
+            image_height=int(depth_map.shape[-2]),
+            horizontal_fov_degrees=float(override_plan.horizontal_fov_degrees),
+        )
+        target_intrinsic = (
+            np.repeat(base_intrinsic[None, :, :], intrinsic.shape[0], axis=0)
+            if intrinsic.ndim == 3
+            else base_intrinsic
+        )
+    else:
+        target_intrinsic = intrinsic if stored_moge_intrinsic is None else stored_moge_intrinsic
+
+    return {
+        "changed": not np.allclose(intrinsic, target_intrinsic, atol=1e-6),
+        "effective_intrinsic": target_intrinsic.astype(np.float32),
+    }
 
 
 def run_command(command: list[str], *, cwd: Path) -> None:
@@ -635,6 +764,7 @@ def emit_dry_run_plan(
     gaussian_output_dir = shared_dir / "fitted_3D_gaussian"
     depth_npz_path = estimated_depth_dir / "depth_intrinsics.npz"
     gaussian_json_path = gaussian_output_dir / "gaussian_params.json"
+    override_plan = resolve_intrinsic_override_plan(args, output_root=output_root)
 
     print("=== Dry Run: single-image multi-trajectory batch ===")
     print(f"input_image_path: {Path(args.input_image_path).resolve()}")
@@ -649,17 +779,52 @@ def emit_dry_run_plan(
     print("")
 
     depth_reused = args.resume and is_existing_nonempty_file(depth_npz_path)
+    intrinsic_preview = None
+    intrinsic_will_change = False
+    if depth_reused:
+        intrinsic_preview = preview_shared_intrinsics(
+            depth_npz_path=depth_npz_path,
+            override_plan=override_plan,
+        )
+        intrinsic_will_change = bool(intrinsic_preview["changed"])
     segmentation_reused = args.resume and (
         is_camera_only_mask_dir(masks_dir) if args.camera_only else has_mask_pngs(masks_dir)
     )
     gaussian_reused = args.resume and (
         is_camera_only_gaussian_json(gaussian_json_path) if args.camera_only else is_existing_nonempty_file(gaussian_json_path)
     )
+    if intrinsic_will_change:
+        gaussian_reused = False
 
     print("[Shared]")
     print(f"- depth: {'reuse' if depth_reused else 'run'} -> {depth_npz_path}")
     if not depth_reused:
         print(f"  command: {describe_command(build_moge_command(args, estimated_depth_dir))}")
+    if override_plan.mode == "known_horizontal_fov":
+        print(
+            "- intrinsics: "
+            f"{override_plan.mode} ({override_plan.horizontal_fov_degrees:.1f} deg horizontal FOV)"
+        )
+        if override_plan.source == "auto_series_my_nt":
+            print(
+                "  note: auto-matched known 3ds Max series"
+                f" '{override_plan.matched_series_name}', so Step 1 output K will be rewritten"
+            )
+        else:
+            print("  note: explicit CLI override will rewrite Step 1 output K")
+    else:
+        print("- intrinsics: moge_predicted")
+        if override_plan.source == "auto_disabled":
+            print("  note: auto known-intrinsics override is disabled for this run")
+
+    if intrinsic_preview is not None:
+        print(
+            "  preview: current shared NPZ already "
+            + ("matches" if not intrinsic_will_change else "differs from")
+            + " the effective intrinsic strategy"
+        )
+        if intrinsic_will_change:
+            print("  note: downstream Gaussian / render / video reuse will be invalidated by the new K")
     if args.camera_only:
         print(f"- segmentation: {'reuse' if segmentation_reused else 'camera_only_empty'} -> {masks_dir}")
         print("  note: skip foreground segmentation; keep mask dir empty so the whole image becomes rigid background")
@@ -700,7 +865,11 @@ def emit_dry_run_plan(
         generated_videos_dir = preset_dir / "generated_videos"
         existing_video = find_generated_video(generated_videos_dir)
         render_reused = args.resume and is_valid_render_output_dir(rendering_maps_dir)
+        if intrinsic_will_change:
+            render_reused = False
         generation_reused = args.resume and existing_video is not None
+        if intrinsic_will_change:
+            generation_reused = False
         generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
 
         print(f"- [{index_text}] {preset['name']}")
@@ -972,6 +1141,23 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional local or HF path passed through to moge-v2_infer.py --pretrained",
     )
+    parser.add_argument(
+        "--known_horizontal_fov_degrees",
+        type=float,
+        default=None,
+        help=(
+            "Override shared camera intrinsics using a known horizontal FOV in degrees. "
+            "When set, Step 1 depth_intrinsics.npz will keep MoGE depth but replace intrinsic with this FOV-derived K."
+        ),
+    )
+    parser.add_argument(
+        "--disable_auto_known_intrinsics",
+        action="store_true",
+        help=(
+            "Disable the built-in auto override for known 3ds Max render series such as my* / nt*, "
+            "and keep using MoGE-predicted intrinsics unless --known_horizontal_fov_degrees is set."
+        ),
+    )
     parser.add_argument("--sample_size", type=str, default="720,1280", help="Target sample size as 'height,width'")
     parser.add_argument(
         "--preset_indices",
@@ -1094,11 +1280,16 @@ def main() -> None:
         raise ValueError(
             f"VerseCrafter current inference path is fixed to {DEFAULT_NUM_FRAMES} frames; got {args.num_frames}."
         )
+    if args.known_horizontal_fov_degrees is not None and not 0.0 < args.known_horizontal_fov_degrees < 180.0:
+        raise ValueError(
+            "known_horizontal_fov_degrees must be in (0, 180) when provided"
+        )
 
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
     target_height, target_width = parse_sample_size(args.sample_size)
+    override_plan = resolve_intrinsic_override_plan(args, output_root=output_root)
     manifest_path = output_root / MANIFEST_FILE_NAME
     all_preset_specs = get_preset_run_specs(args.total_movement_distance_factor)
     active_preset_specs = select_preset_run_specs(all_preset_specs, args.preset_indices)
@@ -1162,7 +1353,24 @@ def main() -> None:
             is_existing_nonempty_file(depth_npz_path),
             f"Depth estimation output missing: {depth_npz_path}",
         )
+        intrinsic_sync = sync_shared_intrinsics(
+            depth_npz_path=depth_npz_path,
+            override_plan=override_plan,
+        )
+        shared_intrinsic_changed = bool(intrinsic_sync["changed"])
         manifest["shared"]["depth_status"] = "reused" if depth_reused else "completed"
+        if override_plan.mode == "known_horizontal_fov":
+            manifest["shared"]["intrinsic_status"] = (
+                "known_horizontal_fov_overridden" if shared_intrinsic_changed else "known_horizontal_fov_reused"
+            )
+        else:
+            manifest["shared"]["intrinsic_status"] = (
+                "moge_predicted_restored" if intrinsic_sync["restored_moge_intrinsic"] else "moge_predicted_reused"
+            )
+        manifest["shared"]["intrinsic_mode"] = intrinsic_sync["mode"]
+        manifest["shared"]["intrinsic_source"] = override_plan.source
+        manifest["shared"]["effective_horizontal_fov_degrees"] = intrinsic_sync["effective_horizontal_fov_degrees"]
+        manifest["shared"]["effective_intrinsic"] = intrinsic_sync["effective_intrinsic"].tolist()
         manifest["shared"]["status"] = "running"
         manifest["shared"]["error"] = None
         save_manifest(manifest_path, manifest)
@@ -1172,7 +1380,11 @@ def main() -> None:
         # ------------------------------------------------------------------
         if args.camera_only:
             segmentation_reused = args.resume and is_camera_only_mask_dir(masks_dir)
-            gaussian_reused = args.resume and is_camera_only_gaussian_json(gaussian_json_path)
+            gaussian_reused = (
+                args.resume
+                and not shared_intrinsic_changed
+                and is_camera_only_gaussian_json(gaussian_json_path)
+            )
             if not segmentation_reused or not gaussian_reused:
                 ensure_clean_path(foreground_masks_dir)
                 ensure_clean_path(gaussian_output_dir)
@@ -1203,7 +1415,11 @@ def main() -> None:
             # ------------------------------------------------------------------
             # Shared step 3: 3D Gaussian fitting
             # ------------------------------------------------------------------
-            gaussian_reused = args.resume and is_existing_nonempty_file(gaussian_json_path)
+            gaussian_reused = (
+                args.resume
+                and not shared_intrinsic_changed
+                and is_existing_nonempty_file(gaussian_json_path)
+            )
             if not gaussian_reused:
                 ensure_clean_path(gaussian_output_dir)
                 run_command(
@@ -1270,7 +1486,12 @@ def main() -> None:
 
             try:
                 existing_video = find_generated_video(generated_videos_dir)
-                if args.resume and existing_video is not None and is_valid_render_output_dir(rendering_maps_dir):
+                if (
+                    args.resume
+                    and not shared_intrinsic_changed
+                    and existing_video is not None
+                    and is_valid_render_output_dir(rendering_maps_dir)
+                ):
                     trajectory_manifest["trajectory_assets_status"] = "reused"
                     trajectory_manifest["render_status"] = "reused"
                     trajectory_manifest["generation_status"] = "reused"
@@ -1318,7 +1539,11 @@ def main() -> None:
                 save_manifest(manifest_path, manifest)
 
                 # 3) Render 4D control maps
-                render_reused = args.resume and is_valid_render_output_dir(rendering_maps_dir)
+                render_reused = (
+                    args.resume
+                    and not shared_intrinsic_changed
+                    and is_valid_render_output_dir(rendering_maps_dir)
+                )
                 if not render_reused:
                     ensure_clean_path(rendering_maps_dir)
                     run_command(
@@ -1343,7 +1568,11 @@ def main() -> None:
 
                 # 4) Final VerseCrafter generation
                 existing_video = find_generated_video(generated_videos_dir)
-                generation_reused = args.resume and existing_video is not None
+                generation_reused = (
+                    args.resume
+                    and not shared_intrinsic_changed
+                    and existing_video is not None
+                )
                 if not generation_reused:
                     ensure_clean_path(generated_videos_dir)
                     generated_videos_dir.mkdir(parents=True, exist_ok=True)

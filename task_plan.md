@@ -396,3 +396,72 @@
 ### 状态
 **任务已完成**
 - 已完成代码修改, 回归测试, smoke 测试和动态数值检查.
+
+## [2026-04-05 11:44:38 UTC] 任务: 基于 3ds Max FOV 90 调整 my / nt 系列单图多轨迹流程
+
+### 目标
+- 让 `single_image_multi_trajectory.py` 在处理 `my` / `nt` 系列 3ds Max 渲染图时, 使用与 `FOV 90°` 一致的相机内参, 减少 MoGE 估计内参与真实渲染相机不一致带来的几何偏差.
+
+### 已知现象
+- 用户明确说明 `my` 和 `nt` 系列输入图来自 3ds Max, 渲染时使用 `FOV 90°`.
+- 当前流程的 `depth_intrinsics.npz` 由 `moge-v2_infer.py` 生成, 其中 `intrinsic` 来自模型预测.
+- 后续点云反投影、Gaussian 拟合、4D control map 渲染都会读取这份内参.
+
+### 当前假设
+- 主假设: 对 `my` / `nt` 系列输入, 使用 MoGE 预测内参会把“已知真值相机”重新估一遍, 从而让几何控制链路偏离真实投影视角.
+- 备选解释: 问题不只在初始内参, 还可能和 Blender 相机只部分消费内参、或某些后续步骤没有统一读取覆盖后的 K 矩阵有关.
+- 可推翻主假设的证据: 如果流程中真正影响最终生成的关键步骤没有使用 `depth_intrinsics.npz` 的 `intrinsic`, 或者覆盖后数值与现有结果等价, 那么仅改 Step 1 内参不会产生有效改善.
+
+### 阶段
+- [x] 阶段1: 回读历史上下文文件, 收集与相机 / 轨迹 / 数据集约定相关的信息
+- [x] 阶段2: 梳理 `single_image_multi_trajectory.py` 到渲染阶段的内参数据流, 确认最佳覆盖点
+- [x] 阶段3: 实现 `FOV 90°` 内参覆盖策略, 并让相关产物保持一致
+- [x] 阶段4: 补充回归验证, 记录结论与后续建议
+
+### 做出的决定
+- 决定: 覆盖点放在 Step 1 之后、Step 2/3 之前.
+  - 理由: 这样 `camera_only`、Gaussian 拟合、4D control map 渲染都能自动复用同一份共享 K.
+- 决定: 增加“显式 CLI 覆盖 + `my*` / `nt*` 自动识别”双路径.
+  - 理由: 当前用户的主工作流就是这两个系列, 自动识别能减少漏配; 显式参数又保留了可控性.
+- 决定: 在 `depth_intrinsics.npz` 中额外保留 `moge_intrinsic`.
+  - 理由: 以后若要取消覆盖, 需要能无损恢复原始 MoGE 预测内参.
+- 决定: 一旦共享 K 改变, 禁止复用旧的 Gaussian / render / generated video.
+  - 理由: 否则 resume 会把“旧 K 下的中间产物”当成新结果继续复用, 造成静默错配.
+
+### 验证记录
+- 代码实现:
+  - `single_image_multi_trajectory_lib.py`
+    - 新增 `build_normalized_intrinsic_from_horizontal_fov`
+    - 新增 `sync_depth_intrinsics_npz`
+  - `single_image_multi_trajectory.py`
+    - 新增 `my*` / `nt*` 自动识别逻辑
+    - 新增 `--known_horizontal_fov_degrees`
+    - 新增 `--disable_auto_known_intrinsics`
+    - Step 1 后自动同步共享 `depth_intrinsics.npz` 内参
+    - 当共享 K 变化时, 强制下游 Gaussian / render / generation 失效重跑
+- 编译验证:
+  - `pixi run python -m py_compile inference/single_image_multi_trajectory.py inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+    - 通过
+- 测试验证:
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+    - `17 passed in 0.36s`
+  - `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+    - `5 passed in 1.05s`
+- 真实样本数值核对:
+  - `demo_data/my7/shared/estimated_depth/depth_intrinsics.npz`
+  - 当前预测 K:
+    - `fx ≈ 1185.04`
+    - `fy ≈ 1185.00`
+  - `FOV 90°` 目标 K:
+    - `fx = 1365.0`
+    - `fy = 1365.0`
+  - 说明当前预测内参与已知真值相机并不一致, 覆盖是有意义的.
+
+### 结论
+- 已让 `single_image_multi_trajectory.py` 支持基于已知 `FOV 90°` 覆盖共享内参.
+- `my` / `nt` 系列现在默认会自动套用 `horizontal FOV = 90°`.
+- 共享 K 一旦变化, 旧的 Gaussian / render / video 不会再被错误复用.
+
+### 状态
+**任务已完成**
+- 已完成代码实现, 回归测试和真实样本数值核对.

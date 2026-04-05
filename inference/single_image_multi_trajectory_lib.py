@@ -360,6 +360,129 @@ def load_depth_and_intrinsic(npz_path: str | Path) -> tuple[np.ndarray, np.ndarr
     return depth, intrinsic
 
 
+def build_normalized_intrinsic_from_horizontal_fov(
+    *,
+    image_width: int,
+    image_height: int,
+    horizontal_fov_degrees: float,
+    principal_point_x: float = 0.5,
+    principal_point_y: float = 0.5,
+) -> np.ndarray:
+    """按“水平 FOV + 居中主点 + 方形像素”构造规范化内参.
+
+    这里返回的是与 `depth_intrinsics.npz` 当前约定一致的“规范化 K”.
+    也就是:
+    - `fx / width`
+    - `fy / height`
+    - `cx / width`
+    - `cy / height`
+    """
+
+    width = int(image_width)
+    height = int(image_height)
+    horizontal_fov = float(horizontal_fov_degrees)
+
+    if width <= 0 or height <= 0:
+        raise ValueError(f"image size must be positive, got {width}x{height}")
+    if not 0.0 < horizontal_fov < 180.0:
+        raise ValueError(f"horizontal_fov_degrees must be in (0, 180), got {horizontal_fov_degrees}")
+
+    # 这里显式采用“水平 FOV”口径.
+    # 对方形像素相机, 水平方向算出的像素焦距同样适用于垂直方向.
+    half_fov_radians = np.deg2rad(horizontal_fov) * 0.5
+    focal_pixels = float(width) / (2.0 * float(np.tan(half_fov_radians)))
+
+    return np.array(
+        [
+            [focal_pixels / float(width), 0.0, float(principal_point_x)],
+            [0.0, focal_pixels / float(height), float(principal_point_y)],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def sync_depth_intrinsics_npz(
+    npz_path: str | Path,
+    *,
+    horizontal_fov_degrees: float | None,
+) -> dict[str, Any]:
+    """同步 `depth_intrinsics.npz` 里的 `intrinsic`.
+
+    规则很简单:
+    - 给了 `horizontal_fov_degrees`, 就按已知真值相机覆盖 `intrinsic`
+    - 第一次覆盖时, 把原始 MoGE 预测值备份到 `moge_intrinsic`
+    - 没给 `horizontal_fov_degrees` 且文件里有 `moge_intrinsic`, 就恢复原始预测值
+    """
+
+    path = Path(npz_path)
+    with np.load(path) as data:
+        arrays = {name: np.asarray(data[name]) for name in data.files}
+
+    if "depth" not in arrays or "intrinsic" not in arrays:
+        raise ValueError(f"{path} must contain both 'depth' and 'intrinsic'")
+
+    depth = np.asarray(arrays["depth"])
+    intrinsic = np.asarray(arrays["intrinsic"], dtype=np.float32)
+    stored_moge_intrinsic = arrays.get("moge_intrinsic")
+    stored_moge_intrinsic_f32 = (
+        None
+        if stored_moge_intrinsic is None
+        else np.asarray(stored_moge_intrinsic, dtype=np.float32)
+    )
+
+    if depth.ndim < 2:
+        raise ValueError(f"depth array must be at least 2D, got shape {depth.shape}")
+
+    image_height = int(depth.shape[-2])
+    image_width = int(depth.shape[-1])
+
+    if horizontal_fov_degrees is None:
+        target_intrinsic = intrinsic if stored_moge_intrinsic_f32 is None else stored_moge_intrinsic_f32
+        mode = "moge_predicted"
+    else:
+        base_intrinsic = build_normalized_intrinsic_from_horizontal_fov(
+            image_width=image_width,
+            image_height=image_height,
+            horizontal_fov_degrees=float(horizontal_fov_degrees),
+        )
+        if intrinsic.ndim == 3:
+            target_intrinsic = np.repeat(base_intrinsic[None, :, :], intrinsic.shape[0], axis=0)
+        else:
+            target_intrinsic = base_intrinsic
+        mode = "known_horizontal_fov"
+
+    changed = not np.allclose(intrinsic, target_intrinsic, atol=1e-6)
+    stored_backup = stored_moge_intrinsic_f32 is None and horizontal_fov_degrees is not None
+    restored_moge = (
+        horizontal_fov_degrees is None
+        and stored_moge_intrinsic_f32 is not None
+        and changed
+    )
+
+    if changed or stored_backup:
+        arrays["intrinsic"] = target_intrinsic.astype(arrays["intrinsic"].dtype, copy=False)
+
+        # 覆盖真值 K 时, 额外保留一份原始 MoGE K.
+        # 这样以后切回“用预测内参”时可以无损恢复.
+        if horizontal_fov_degrees is not None:
+            moge_intrinsic_to_store = intrinsic if stored_moge_intrinsic_f32 is None else stored_moge_intrinsic_f32
+            arrays["moge_intrinsic"] = moge_intrinsic_to_store.astype(arrays["intrinsic"].dtype, copy=False)
+
+        np.savez_compressed(str(path), **arrays)
+
+    return {
+        "mode": mode,
+        "changed": changed,
+        "stored_moge_intrinsic": stored_backup,
+        "restored_moge_intrinsic": restored_moge,
+        "image_width": image_width,
+        "image_height": image_height,
+        "effective_intrinsic": target_intrinsic.astype(np.float32),
+        "effective_horizontal_fov_degrees": None if horizontal_fov_degrees is None else float(horizontal_fov_degrees),
+    }
+
+
 def estimate_center_depth(
     depth_map: np.ndarray,
     *,

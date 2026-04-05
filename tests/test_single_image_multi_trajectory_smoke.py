@@ -225,3 +225,34 @@ def test_dry_run_can_limit_execution_to_selected_presets(tmp_path: Path) -> None
     assert "- [1] right" not in result.stdout
     assert "- [2] up" not in result.stdout
     assert "- [10] left_down" not in result.stdout
+
+
+def test_dry_run_auto_detects_my_series_and_announces_known_fov_override(tmp_path: Path) -> None:
+    input_dir = tmp_path / "my7"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    input_image = input_dir / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "my7"
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--dry_run",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "- intrinsics: known_horizontal_fov (90.0 deg horizontal FOV)" in result.stdout
+    assert "auto-matched known 3ds Max series 'my7'" in result.stdout

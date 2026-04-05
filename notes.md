@@ -689,3 +689,59 @@
 - 已验证结论:
   - 这次实现确实让前几帧更慢.
   - 同时在第 5 帧后回到原轨迹, 没把整条镜头都拖长.
+
+## [2026-04-05 11:44:38 UTC] 3ds Max `FOV 90°` 与单图多轨迹内参覆盖方案
+
+### 现象
+- 用户说明 `my` 和 `nt` 系列输入图来自 3ds Max 渲染, 使用 `FOV 90°`.
+- 当前 `single_image_multi_trajectory.py` 的共享内参来自 Step 1 `moge-v2_infer.py`.
+- `depth_intrinsics.npz` 中的 `intrinsic` 随后会被:
+  - camera-only 空 Gaussian JSON 继承
+  - `fit_3D_gaussian.py` 读取并继续写入 `gaussian_params.json`
+  - `rendering_4D_control_maps.py` 读取并用于最终 control map 渲染
+
+### 静态证据
+- `moge-v2_infer.py`
+  - `np.savez_compressed(..., depth=..., intrinsic=...)`
+- `single_image_multi_trajectory.py`
+  - Step 1 之后直接复用 `shared/estimated_depth/depth_intrinsics.npz`
+  - camera-only 分支会从该 NPZ 读取 `intrinsic`, 生成空 Gaussian JSON
+  - 非 camera-only 分支会把该 NPZ 传给 `fit_3D_gaussian.py`
+- `fit_3D_gaussian.py`
+  - 会从 NPZ 读取 `intrinsic`, 再按分辨率反归一化
+- `rendering_4D_control_maps.py`
+  - 会从 NPZ 读取 `intrinsic`, 再构造 `PerspectiveCameras(focal_length, principal_point)`
+
+### 动态 / 数据证据
+- 现有样本 `demo_data/my7/shared/estimated_depth/depth_intrinsics.npz`:
+  - `intrinsic = [[0.434082, 0, 0.5], [0, 0.771484, 0.5], [0, 0, 1]]`
+  - 分辨率 `2730 x 1536`
+  - 反归一化后:
+    - `fx ≈ 1185.04`
+    - `fy ≈ 1185.00`
+    - `cx = 1365`
+    - `cy = 768`
+- 若按“水平 FOV = 90° + 主点居中 + 方形像素”重建 K:
+  - `fx = fy = width / 2 = 1365`
+  - 归一化后:
+    - `fx_norm = 0.5`
+    - `fy_norm = 1365 / 1536 = 0.888672`
+    - `cx_norm = cy_norm = 0.5`
+- 说明当前预测内参与“已知 FOV 90°”并不相同.
+
+### 外部资料
+- Autodesk 官方文档:
+  - 3ds Max 相机 `.fov` 属性默认是 horizontal FOV
+  - `fovType` 可切换 horizontal / vertical / diagonal
+  - 官方文档还写明 `Horizontal (The default.)`
+- 这意味着, 在没有额外反证时, 把用户说的 “3ds Max FOV 90°” 按“水平 FOV 90°”解释是当前最稳妥的口径.
+
+### 当前结论
+- 主假设目前得到较强静态证据支持:
+  - 对 `my` / `nt` 这类已知真值相机输入, 应优先覆盖共享 `depth_intrinsics.npz` 的 `intrinsic`, 而不是继续使用 MoGE 估计 K.
+- 最佳覆盖点:
+  - Step 1 之后, Step 2/3 之前
+  - 这样 camera-only / Gaussian / render 都能自动保持一致
+- 仍需注意的备选解释:
+  - Blender 里用于展示的相机对象目前只按 `fx` 设 FOV, 没完整消费 `fy/cx/cy`
+  - 所以后续如果“Blender 视图看起来不对, 但最终生成改善了”, 不应误判这次覆盖策略失败

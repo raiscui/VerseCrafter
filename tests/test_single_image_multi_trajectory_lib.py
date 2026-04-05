@@ -9,12 +9,14 @@ from inference.single_image_multi_trajectory_lib import (
     COORD_TRANSFORM_CV2BLENDER,
     build_generation_prompt,
     build_empty_gaussian_params_payload,
+    build_normalized_intrinsic_from_horizontal_fov,
     convert_static_gaussian_json_to_trajectory,
     estimate_center_depth,
     generate_blender_camera_trajectory,
     get_preset_run_specs,
     make_blender_camera_to_world,
     select_preset_run_specs,
+    sync_depth_intrinsics_npz,
 )
 
 
@@ -91,6 +93,78 @@ def test_estimate_center_depth_prefers_center_crop_quantile() -> None:
     estimated = estimate_center_depth(depth, depth_quantile=0.2, center_crop_ratio=0.5)
 
     assert np.isclose(estimated, np.quantile(center_patch.reshape(-1), 0.2))
+
+
+def test_build_normalized_intrinsic_from_horizontal_fov_uses_centered_square_pixel_model() -> None:
+    intrinsic = build_normalized_intrinsic_from_horizontal_fov(
+        image_width=1920,
+        image_height=1080,
+        horizontal_fov_degrees=90.0,
+    )
+
+    assert np.allclose(
+        intrinsic,
+        np.array(
+            [
+                [0.5, 0.0, 0.5],
+                [0.0, 960.0 / 1080.0, 0.5],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        atol=1e-6,
+    )
+
+
+def test_sync_depth_intrinsics_npz_can_override_and_restore_original_moge_intrinsic(tmp_path: Path) -> None:
+    npz_path = tmp_path / "depth_intrinsics.npz"
+    original_intrinsic = np.array(
+        [
+            [0.43408203, 0.0, 0.5],
+            [0.0, 0.7714844, 0.5],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float16,
+    )
+    np.savez_compressed(
+        npz_path,
+        depth=np.full((1536, 2730), 2.0, dtype=np.float16),
+        intrinsic=original_intrinsic,
+    )
+
+    override_result = sync_depth_intrinsics_npz(
+        npz_path,
+        horizontal_fov_degrees=90.0,
+    )
+    expected_override = build_normalized_intrinsic_from_horizontal_fov(
+        image_width=2730,
+        image_height=1536,
+        horizontal_fov_degrees=90.0,
+    )
+
+    assert override_result["mode"] == "known_horizontal_fov"
+    assert override_result["changed"] is True
+    assert override_result["stored_moge_intrinsic"] is True
+    assert np.allclose(override_result["effective_intrinsic"], expected_override, atol=5e-4)
+
+    with np.load(npz_path) as overridden:
+        assert "moge_intrinsic" in overridden.files
+        assert np.allclose(overridden["intrinsic"], expected_override.astype(np.float16), atol=5e-4)
+        assert np.allclose(overridden["moge_intrinsic"], original_intrinsic, atol=5e-4)
+
+    restore_result = sync_depth_intrinsics_npz(
+        npz_path,
+        horizontal_fov_degrees=None,
+    )
+
+    assert restore_result["mode"] == "moge_predicted"
+    assert restore_result["changed"] is True
+    assert restore_result["restored_moge_intrinsic"] is True
+    assert np.allclose(restore_result["effective_intrinsic"], original_intrinsic.astype(np.float32), atol=5e-4)
+
+    with np.load(npz_path) as restored:
+        assert np.allclose(restored["intrinsic"], original_intrinsic, atol=5e-4)
+        assert np.allclose(restored["moge_intrinsic"], original_intrinsic, atol=5e-4)
 
 
 def test_make_blender_camera_to_world_matches_default_forward_direction() -> None:

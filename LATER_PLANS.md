@@ -35,3 +35,14 @@
   - 用输入图对前几帧 RGB control 做渐变混合
   - 暴露 `subject_ref_images` 或等价参考图路径, 给 GeoAda 更强的多帧参考锚点
   - 如果后续需要更细调参, 再考虑把 lead-in 参数暴露成 CLI 选项
+
+## [2026-04-05 11:44:38 UTC] 让 Blender 预览相机完整消费共享 K 矩阵
+- 现状:
+  - 本次已经让单图多轨迹的共享 `depth_intrinsics.npz` 支持按 `FOV 90°` 覆盖.
+  - 但 Blender 侧 `build_4d_control_scene.py` / `blender_addon/operators.py` 创建相机对象时, 目前主要只按 `fx` 算 `angle`, 没完整映射 `fy / cx / cy`.
+- 影响:
+  - 最终 4D control map 渲染会吃到正确 K.
+  - 但 Blender 里用户看到的“展示相机”仍可能和真实投影不完全一致, 特别是主点偏移或非对称内参场景.
+- 建议:
+  - 后续补齐 Blender Camera 的 `shift_x / shift_y` 等映射
+  - 明确区分“展示相机”和“实际渲染相机契约”, 避免调试时被预览误导

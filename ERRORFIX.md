@@ -159,3 +159,39 @@
   - `left` 轨迹前几帧位移从 `0.055556 / 0.111111 / 0.166667 / 0.222222`
     变为 `0.0 / 0.017361 / 0.069444 / 0.15625`
   - `clockwise` 前几帧位移范数同样明显降低, 且第 5 帧后追平原轨迹
+
+## [2026-04-05 11:44:38 UTC] 问题: 已知 3ds Max `FOV 90°` 的输入图, 仍然沿用 MoGE 预测内参
+
+### 问题现象
+- `my` / `nt` 系列输入图来自 3ds Max 渲染, 已知相机 `FOV 90°`.
+- 当前单图多轨迹流程仍然默认使用 Step 1 `moge-v2_infer.py` 写入的 `depth_intrinsics.npz -> intrinsic`.
+- 后续 Gaussian 拟合、camera-only 空 JSON、4D control map 渲染都会继续吃这份预测 K.
+
+### 原因判断
+- 已验证结论:
+  - 共享 `depth_intrinsics.npz` 是整条几何控制链的统一内参入口.
+  - 如果这里继续保留预测 K, “已知真值相机”会被再次估计, 从而引入额外几何偏差.
+  - 只改 Step 5 或只改 Blender 展示层都不够, 因为 Step 3 也会消耗这份 K.
+
+### 修复/处置
+- 在 `single_image_multi_trajectory_lib.py` 新增:
+  - `build_normalized_intrinsic_from_horizontal_fov`
+  - `sync_depth_intrinsics_npz`
+- 在 `single_image_multi_trajectory.py` 中:
+  - Step 1 完成后立即同步共享 `intrinsic`
+  - 支持 `--known_horizontal_fov_degrees`
+  - 对 `my*` / `nt*` 自动套用 `horizontal FOV = 90°`
+  - 额外把原始 MoGE K 备份到 `moge_intrinsic`, 便于后续恢复
+  - 一旦共享 K 改变, 禁止复用旧的 Gaussian / render / generated video
+
+### 验证结果
+- `pixi run python -m py_compile inference/single_image_multi_trajectory.py inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_smoke.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+  - `17 passed in 0.36s`
+- `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+  - `5 passed in 1.05s`
+- `demo_data/my7` 数值验证:
+  - 当前预测 `fx/fy ≈ 1185`
+  - `FOV 90°` 目标 `fx/fy = 1365`
+  - 说明当前预测内参与已知真值相机确实不一致

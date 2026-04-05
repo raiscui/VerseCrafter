@@ -264,6 +264,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --translation_reference_depth_scale 0.95 \
   --total_movement_distance_factor 1.0 \
   --sample_size "720,1280" \
+  --known_horizontal_fov_degrees 90 \
   --num_inference_steps 60 \
   --gpu_memory_mode model_cpu_offload \
   --ulysses_degree 2 \

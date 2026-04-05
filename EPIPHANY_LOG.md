@@ -197,3 +197,33 @@
 
 ### 后续讨论入口
 - 后续若要继续缩小问题范围, 应优先加一个“前几帧轨迹 hold/ease-in”实验, 而不是先纠结 `camera_only` 本身.
+
+## [2026-04-05 11:44:38 UTC] 主题: 单图多轨迹链路里的“真实共享内参”和“Blender 展示相机”目前不是同一层契约
+
+### 发现来源
+- 本次为 `my` / `nt` 系列接入 3ds Max `FOV 90°` 共享内参覆盖时, 顺带核对了 Step 1 -> Step 5 -> Blender 展示链.
+
+### 核心问题
+- 共享 `depth_intrinsics.npz` 里的 `intrinsic` 已经会影响:
+  - camera-only 空 Gaussian JSON
+  - `fit_3D_gaussian.py`
+  - `rendering_4D_control_maps.py`
+- 但 Blender 展示相机目前主要只按 `fx` 推 `angle`.
+- `fy / cx / cy` 没被完整映射到 Blender Camera 参数层.
+
+### 为什么重要
+- 这会形成一个很隐蔽的错觉:
+  - 最终 control map 可能已经用对了 K
+  - 但 Blender 里“看起来像相机不对”
+- 如果排障时没意识到这两个层级不同, 很容易把“预览不一致”误判成“共享内参覆盖失败”.
+
+### 当前结论
+- 当前任务已经修好“共享几何链路里的 K 来源”.
+- 但 Blender 展示层还存在“只部分消费 K”的历史欠账.
+- 以后如果用户说“数值上已经是 90° 了, 但 Blender 看起来还怪”, 应优先检查展示相机映射, 不要先回滚共享内参修复.
+
+### 后续讨论入口
+- 下一次如果要继续抬高可视化一致性, 先看:
+  - `inference/blender_script/build_4d_control_scene.py`
+  - `blender_addon/operators.py`
+ 里相机对象创建逻辑是否需要补 `shift_x / shift_y` 等完整映射.
