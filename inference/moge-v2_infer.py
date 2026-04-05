@@ -26,6 +26,44 @@ import utils3d
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+def resolve_pretrained_model_reference(pretrained_model_name_or_path: str) -> str:
+    """规范化 `--pretrained` 输入, 并提前拦截本地路径权限问题."""
+
+    value = pretrained_model_name_or_path.strip()
+    looks_like_local_path = (
+        value.startswith(("~", ".", "/"))
+        or value.endswith((".pt", ".pth", ".bin", ".safetensors"))
+    )
+
+    if not looks_like_local_path:
+        return value
+
+    candidate = Path(value).expanduser()
+    try:
+        exists = candidate.exists()
+    except PermissionError as exc:
+        raise PermissionError(
+            "无法访问本地 MoGe checkpoint: "
+            f"{candidate}. 当前进程用户没有读取这个路径的权限. "
+            "如果这是别的用户的缓存目录(例如 `/root/.cache/...`), "
+            "请改用当前用户自己的 `~/.cache/.../model.pt`, "
+            "或者直接把 `--pretrained` 改成 HF repo id, 例如 `Ruicheng/moge-2-vitl`."
+        ) from exc
+
+    if exists:
+        if not candidate.is_file():
+            raise FileNotFoundError(
+                f"MoGe 本地 checkpoint 不是文件: {candidate}. 请传具体的 `model.pt` 文件路径."
+            )
+        return str(candidate)
+
+    raise FileNotFoundError(
+        "指定的本地 MoGe checkpoint 不存在: "
+        f"{candidate}. 如果你想自动下载, 请把 `--pretrained` 改成 HF repo id, "
+        "例如 `Ruicheng/moge-2-vitl`, 不要传一个不存在的本地文件路径."
+    )
+
 def main(
     input_path: str,
     fov_x_: float,
@@ -63,6 +101,8 @@ def main(
             "v2": "Ruicheng/moge-2-vitl-normal",
         }
         pretrained_model_name_or_path = DEFAULT_PRETRAINED_MODEL_FOR_EACH_VERSION[model_version]
+    else:
+        pretrained_model_name_or_path = resolve_pretrained_model_reference(pretrained_model_name_or_path)
     model = import_model_class_by_version(model_version).from_pretrained(pretrained_model_name_or_path).to(device).eval()
     logger.info('Loaded model: %s on %s', pretrained_model_name_or_path, device)
     if use_fp16:

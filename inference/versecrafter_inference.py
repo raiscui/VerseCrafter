@@ -85,6 +85,11 @@ args = parser.parse_args()
 
 # Parse sample_size from string to list
 sample_size = [int(x) for x in args.sample_size.split(',')]
+if sample_size[0] % 16 != 0 or sample_size[1] % 16 != 0:
+    raise ValueError(
+        "sample_size height and width must both be multiples of 16 for VerseCrafter generation; "
+        f"got {sample_size[0]},{sample_size[1]}."
+    )
 
 # GPU memory mode, which can be chosen in:
 # [model_full_load, model_full_load_and_qfloat8, model_cpu_offload, 
@@ -322,10 +327,25 @@ else:
 coefficients = [8.10705460e+03,  2.13393892e+03, -3.72934672e+02,  1.66203073e+01, -4.17769401e-02]
 
 if coefficients is not None:
-    print(f"Enable TeaCache with threshold {teacache_threshold} and skip the first {num_skip_start_steps} steps.")
+    # -------------------------------------------------------------------------
+    # 小规模 smoke test 往往会把 `num_inference_steps` 压得很低.
+    # TeaCache 的 `num_skip_start_steps` 不能超过总步数, 否则会直接抛错.
+    # 这里对默认值做合法化收缩, 正常大步数推理不受影响.
+    # -------------------------------------------------------------------------
+    effective_teacache_skip_start_steps = min(max(num_skip_start_steps, 0), num_inference_steps)
+    if effective_teacache_skip_start_steps != num_skip_start_steps:
+        print(
+            "Adjust TeaCache num_skip_start_steps from "
+            f"{num_skip_start_steps} to {effective_teacache_skip_start_steps} "
+            f"because num_inference_steps={num_inference_steps}."
+        )
+    print(
+        "Enable TeaCache with threshold "
+        f"{teacache_threshold} and skip the first {effective_teacache_skip_start_steps} steps."
+    )
     pipeline.transformer.enable_teacache(
         coefficients, num_inference_steps, teacache_threshold, 
-        num_skip_start_steps=num_skip_start_steps, offload=teacache_offload
+        num_skip_start_steps=effective_teacache_skip_start_steps, offload=teacache_offload
     )
 
 if cfg_skip_ratio is not None:

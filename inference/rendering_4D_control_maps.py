@@ -17,6 +17,7 @@ import argparse
 import os
 import json
 from pathlib import Path
+import sys
 from typing import Optional, Tuple, Dict, List
 from time import time
 
@@ -27,7 +28,37 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
-from kornia.geometry.depth import depth_to_3d_v2
+
+
+def prefer_installed_pytorch3d() -> None:
+    """优先使用环境里已安装的 PyTorch3D, 避免被仓库内源码目录遮住.
+
+    当前仓库根目录下存在一份 `pytorch3d/` 源码 checkout.
+    当脚本以仓库根目录为 cwd 启动时, Python 会先看到这份源码目录,
+    进而把真正安装好的 `site-packages/pytorch3d` 遮住.
+    这里仅移除“仓库根目录”这一条导入路径, 保留 `inference/` 自身路径,
+    让脚本还能正常读取同目录模块, 同时把 `pytorch3d` 解析回已安装包.
+    """
+
+    repo_root = Path(__file__).resolve().parents[1]
+    local_pytorch3d_checkout = repo_root / "pytorch3d" / "pytorch3d"
+    if not local_pytorch3d_checkout.exists():
+        return
+
+    filtered_sys_path: list[str] = []
+    removed_repo_root = False
+    for entry in sys.path:
+        entry_path = Path(entry or os.getcwd()).resolve()
+        if entry_path == repo_root:
+            removed_repo_root = True
+            continue
+        filtered_sys_path.append(entry)
+
+    if removed_repo_root:
+        sys.path[:] = filtered_sys_path
+
+
+prefer_installed_pytorch3d()
 
 from pytorch3d.structures import Pointclouds, Meshes, join_meshes_as_batch
 from pytorch3d.renderer import (
@@ -61,6 +92,65 @@ COORD_TRANSFORM_CV2BLENDER = np.array([
     [0,  0,  1],  # Blender Y = OpenCV Z (forward)
     [0, -1,  0],  # Blender Z = -OpenCV Y (up; OpenCV Y points down)
 ], dtype=np.float32)
+
+
+def depth_to_3d_v2_compatible(
+    depth: torch.Tensor,
+    camera_matrix: torch.Tensor,
+    normalize_points: bool = False,
+) -> torch.Tensor:
+    """用最小 Torch 实现复刻 Kornia 的 `depth_to_3d_v2` 行为.
+
+    当前脚本只需要“深度图 + 相机内参 -> 相机坐标系点云”这一段几何逻辑.
+    直接导入 `kornia` 会先执行它的顶层 `__init__`, 再把 `feature/lightglue`
+    和 `flash_attn` 一起带进来. 当可选的 `flash_attn` 与当前 Torch ABI 不匹配时,
+    整个渲染脚本会在导入阶段提前失败.
+
+    这里将所需的反投影逻辑本地化, 把脚本依赖面收缩到真实使用范围.
+    """
+
+    if depth.ndim < 2:
+        raise ValueError(f"depth must have shape (*, H, W), got {tuple(depth.shape)}")
+    if camera_matrix.shape[-2:] != (3, 3):
+        raise ValueError(
+            f"camera_matrix must have shape (*, 3, 3), got {tuple(camera_matrix.shape)}"
+        )
+
+    camera_matrix = camera_matrix.to(device=depth.device, dtype=depth.dtype)
+    height, width = depth.shape[-2:]
+    leading_shape = depth.shape[:-2]
+
+    # =========================================================================
+    # 生成像素网格, 再按 pinhole 内参反投影到相机坐标系.
+    # 这里复刻的是 Kornia `depth_to_3d_v2(..., normalize_points=False)` 的核心行为.
+    # =========================================================================
+    ys, xs = torch.meshgrid(
+        torch.arange(height, device=depth.device, dtype=depth.dtype),
+        torch.arange(width, device=depth.device, dtype=depth.dtype),
+        indexing="ij",
+    )
+    uv_grid = torch.stack([xs, ys], dim=-1)
+    uv_grid = uv_grid.view((1,) * len(leading_shape) + (height, width, 2)).expand(
+        *leading_shape,
+        height,
+        width,
+        2,
+    )
+
+    fx = camera_matrix[..., 0, 0][..., None, None]
+    fy = camera_matrix[..., 1, 1][..., None, None]
+    cx = camera_matrix[..., 0, 2][..., None, None]
+    cy = camera_matrix[..., 1, 2][..., None, None]
+
+    x = (uv_grid[..., 0] - cx) / fx
+    y = (uv_grid[..., 1] - cy) / fy
+    z = torch.ones_like(x)
+    points_xyz = torch.stack([x, y, z], dim=-1)
+
+    if normalize_points:
+        points_xyz = points_xyz / torch.linalg.norm(points_xyz, dim=-1, keepdim=True).clamp_min(1e-12)
+
+    return points_xyz * depth[..., None]
 
 
 def make_ellipsoid_mesh(mean: torch.Tensor, cov: torch.Tensor, scale_factor: float = 2.0, subdivisions: int = 3,
@@ -925,7 +1015,8 @@ def build_background(
     mask_dir: str,
     device: str = 'cuda',
     target_height: int = None,
-    target_width: int = None
+    target_width: int = None,
+    background_point_limit: int = 0,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
     """Load background RGB, depth, masks and return 3D point cloud.
     
@@ -936,6 +1027,7 @@ def build_background(
         device: Computation device
         target_height: Target height for resizing (if None, use original)
         target_width: Target width for resizing (if None, use original)
+        background_point_limit: 限制背景点数量, 仅用于 smoke test 提速
     
     Returns:
         Tuple of (points_3d, colors, depth, intrinsic, height, width)
@@ -1001,7 +1093,7 @@ def build_background(
     combined_mask = torch.from_numpy(combined_mask_dilated > 127).to(device)
     logger.info(f"Mask dilated (kernel_size={dilate_kernel_size})")
     
-    pts3d_cam = depth_to_3d_v2(depth, intrinsic, normalize_points=False).reshape(-1, 3)
+    pts3d_cam = depth_to_3d_v2_compatible(depth, intrinsic, normalize_points=False).reshape(-1, 3)
     c2w = torch.linalg.inv(extrinsic)
     pts3d_hom = torch.cat([pts3d_cam, torch.ones(len(pts3d_cam), 1, device=pts3d_cam.device)], dim=1)
     pts3d_world_opencv = (c2w @ pts3d_hom.T).T[:, :3]
@@ -1027,7 +1119,27 @@ def build_background(
         logger.warning(f"Filtered out {num_filtered} invalid points from background point cloud")
         bg_points = bg_points[valid_mask]
         bg_colors = bg_colors[valid_mask]
-    
+
+    # =========================================================================
+    # Smoke-test point cloud throttling
+    # -------------------------------------------------------------------------
+    # CPU 上的 PyTorch3D 点云渲染很容易被大量背景点拖慢.
+    # 这里提供一个默认关闭的上限参数, 只在小规模验证时主动降采样.
+    # 采样按栅格展开后的均匀索引进行, 这样比纯随机更稳定、也更容易复现.
+    # =========================================================================
+    if background_point_limit > 0 and len(bg_points) > background_point_limit:
+        original_bg_point_count = len(bg_points)
+        ratio = original_bg_point_count / float(background_point_limit)
+        sample_positions = torch.arange(background_point_limit, device=bg_points.device, dtype=torch.float32)
+        sample_indices = torch.floor(sample_positions * ratio).to(torch.long)
+        bg_points = bg_points[sample_indices]
+        bg_colors = bg_colors[sample_indices]
+        logger.info(
+            "Background point cloud throttled for smoke test: %s -> %s",
+            original_bg_point_count,
+            len(bg_points),
+        )
+
     logger.info(f"Background point cloud: {len(bg_points)} valid points")
 
     return bg_points, bg_colors, intrinsic, extrinsic, H, W
@@ -1202,6 +1314,12 @@ def parse_args():
     parser.add_argument('--sample_frames', type=int, default=10, help='Number of frames to sample')
     parser.add_argument('--target_height', type=int, default=720, help='Target rendering height')
     parser.add_argument('--target_width', type=int, default=1280, help='Target rendering width')
+    parser.add_argument(
+        '--background_point_limit',
+        type=int,
+        default=0,
+        help='Optional limit for background point count in smoke tests; 0 keeps all points',
+    )
     return parser.parse_args()
 
 
@@ -1231,7 +1349,8 @@ def main():
     bg_points, bg_colors, first_intrinsics, first_extrinsic, image_height, image_width = build_background(
         args.png_path, args.npz_path, args.mask_dir, device,
         target_height=args.target_height,
-        target_width=args.target_width
+        target_width=args.target_width,
+        background_point_limit=args.background_point_limit,
     )
     
     # Step 2: Load camera trajectory

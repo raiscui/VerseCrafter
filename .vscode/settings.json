@@ -1,12 +1,12 @@
 {
     "workbench.colorCustomizations": {
-        "activityBar.activeBackground": "#8b341a",
-        "activityBar.background": "#8b341a",
+        "activityBar.activeBackground": "#88332e",
+        "activityBar.background": "#88332e",
         "activityBar.foreground": "#e7e7e7",
         "activityBar.inactiveForeground": "#e7e7e799",
-        "activityBarBadge.background": "#051b0a",
+        "activityBarBadge.background": "#081809",
         "activityBarBadge.foreground": "#e7e7e7",
-        "sash.hoverBorder": "#8b341a"
+        "sash.hoverBorder": "#88332e"
     },
-    "peacock.remoteColor": "#602412"
+    "peacock.remoteColor": "#622521"
 }

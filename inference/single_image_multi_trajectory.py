@@ -149,6 +149,7 @@ def build_manifest(
             "disable_auto_known_intrinsics": args.disable_auto_known_intrinsics,
             "device": args.device,
             "sample_size": args.sample_size,
+            "render_sample_size": args.render_sample_size,
             "num_inference_steps": args.num_inference_steps,
             "ulysses_degree": args.ulysses_degree,
             "ring_degree": args.ring_degree,
@@ -157,6 +158,7 @@ def build_manifest(
             "seed": args.seed,
             "fps": args.fps,
             "gpu_memory_mode": args.gpu_memory_mode,
+            "render_background_point_limit": args.render_background_point_limit,
             "selected_preset_indices": None if args.preset_indices is None else list(args.preset_indices),
             "auto_center_depth_quantile": args.auto_center_depth_quantile,
             "auto_center_depth_center_crop_ratio": args.auto_center_depth_center_crop_ratio,
@@ -201,6 +203,21 @@ def parse_sample_size(sample_size: str) -> tuple[int, int]:
     if len(parts) != 2:
         raise ValueError(f"sample_size must be 'height,width', got: {sample_size}")
     return int(parts[0]), int(parts[1])
+
+
+def validate_generation_sample_size(height: int, width: int) -> None:
+    """验证最终生成尺寸是否满足 VerseCrafter 的块对齐要求.
+
+    当前管线里的 GeoAda mask 编码会按 `16` 的倍数对高宽做分块.
+    如果传入例如 `360,640`, 深层 reshape 才会抛出晦涩的 shape mismatch.
+    这里提前拦截, 把错误收敛成可读的参数约束.
+    """
+
+    if height % 16 != 0 or width % 16 != 0:
+        raise ValueError(
+            "sample_size height and width must both be multiples of 16 for VerseCrafter generation; "
+            f"got {height},{width}."
+        )
 
 
 def ensure_clean_path(path: Path, *, keep_if_missing: bool = True) -> None:
@@ -926,6 +943,8 @@ def build_moge_command(args: argparse.Namespace, estimated_depth_dir: Path) -> l
     ]
     if args.moge_pretrained is not None:
         command.extend(["--pretrained", args.moge_pretrained])
+    if args.moge_fp16:
+        command.append("--fp16")
     return command
 
 
@@ -997,8 +1016,13 @@ def build_render_command(
 ) -> list[str]:
     """构造 Step 5 命令."""
 
+    # 渲染步骤有自己的 PyTorch3D / CUDA 依赖边界.
+    # 默认仍复用全局 python / device, 只有显式指定时才切到独立环境.
+    render_python_bin = args.render_python_bin or args.python_bin
+    render_device = args.render_device or args.device
+
     command = [
-        args.python_bin,
+        render_python_bin,
         "inference/rendering_4D_control_maps.py",
         "--png_path",
         args.input_image_path,
@@ -1013,7 +1037,7 @@ def build_render_command(
         "--output_dir",
         str(output_dir),
         "--device",
-        args.device,
+        render_device,
         "--point_size",
         str(args.point_size),
         "--fps",
@@ -1025,6 +1049,13 @@ def build_render_command(
         "--target_width",
         str(target_width),
     ]
+    if args.render_background_point_limit > 0:
+        command.extend(
+            [
+                "--background_point_limit",
+                str(args.render_background_point_limit),
+            ]
+        )
     if args.render_use_fp16:
         command.append("--use_fp16")
     if args.render_pin_memory:
@@ -1134,31 +1165,37 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--python_bin", type=str, default=sys.executable, help="Python interpreter used for child steps")
     parser.add_argument("--torchrun_bin", type=str, default="torchrun", help="torchrun executable used for Step 6")
     parser.add_argument("--device", type=str, default="cuda", help="Device used by preprocessing and rendering steps")
+    parser.add_argument(
+        "--render_python_bin",
+        type=str,
+        default=None,
+        help="Optional Python interpreter used only for Step 5 rendering. Defaults to --python_bin.",
+    )
+    parser.add_argument(
+        "--render_device",
+        type=str,
+        default=None,
+        help="Optional device used only for Step 5 rendering. Defaults to --device.",
+    )
     parser.add_argument("--moge_version", type=str, choices=["v1", "v2"], default="v2", help="MoGe model version")
     parser.add_argument(
         "--moge_pretrained",
         type=str,
         default=None,
-        help="Optional local or HF path passed through to moge-v2_infer.py --pretrained",
+        help="Optional local `model.pt` path or HF repo id passed through to moge-v2_infer.py --pretrained. Local paths must be readable by the current user.",
     )
     parser.add_argument(
-        "--known_horizontal_fov_degrees",
-        type=float,
-        default=None,
-        help=(
-            "Override shared camera intrinsics using a known horizontal FOV in degrees. "
-            "When set, Step 1 depth_intrinsics.npz will keep MoGE depth but replace intrinsic with this FOV-derived K."
-        ),
-    )
-    parser.add_argument(
-        "--disable_auto_known_intrinsics",
+        "--moge_fp16",
         action="store_true",
-        help=(
-            "Disable the built-in auto override for known 3ds Max render series such as my* / nt*, "
-            "and keep using MoGE-predicted intrinsics unless --known_horizontal_fov_degrees is set."
-        ),
+        help="Run MoGe depth estimation in FP16. Useful on newer GPUs where xformers fp32 attention kernels are unavailable.",
     )
     parser.add_argument("--sample_size", type=str, default="720,1280", help="Target sample size as 'height,width'")
+    parser.add_argument(
+        "--render_sample_size",
+        type=str,
+        default=None,
+        help="Optional Step 5 render size as 'height,width'. Defaults to --sample_size and is useful for faster smoke tests.",
+    )
     parser.add_argument(
         "--preset_indices",
         type=int,
@@ -1201,6 +1238,12 @@ def create_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--point_size", type=float, default=0.005, help="Point size used in Step 5 rendering")
     parser.add_argument("--render_batch_size", type=int, default=27, help="Batch size used in Step 5 rendering")
+    parser.add_argument(
+        "--render_background_point_limit",
+        type=int,
+        default=0,
+        help="Optional background point limit for Step 5 smoke tests; 0 keeps all points",
+    )
     parser.add_argument("--render_use_fp16", action="store_true", help="Enable FP16 rendering in Step 5")
     parser.add_argument("--render_pin_memory", action="store_true", help="Enable pinned memory in Step 5")
 
@@ -1289,7 +1332,8 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     target_height, target_width = parse_sample_size(args.sample_size)
-    override_plan = resolve_intrinsic_override_plan(args, output_root=output_root)
+    validate_generation_sample_size(target_height, target_width)
+    render_height, render_width = parse_sample_size(args.render_sample_size or args.sample_size)
     manifest_path = output_root / MANIFEST_FILE_NAME
     all_preset_specs = get_preset_run_specs(args.total_movement_distance_factor)
     active_preset_specs = select_preset_run_specs(all_preset_specs, args.preset_indices)
@@ -1311,8 +1355,8 @@ def main() -> None:
             output_root=output_root,
             manifest=manifest,
             preset_specs=active_preset_specs,
-            target_height=target_height,
-            target_width=target_width,
+            target_height=render_height,
+            target_width=render_width,
         )
         return
 
@@ -1554,8 +1598,8 @@ def main() -> None:
                             trajectory_npz=trajectory_npz_path,
                             ellipsoid_json=ellipsoid_json_path,
                             output_dir=rendering_maps_dir,
-                            target_height=target_height,
-                            target_width=target_width,
+                            target_height=render_height,
+                            target_width=render_width,
                         ),
                         cwd=PROJECT_ROOT,
                     )

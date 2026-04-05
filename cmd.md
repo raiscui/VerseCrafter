@@ -59,7 +59,7 @@
     --sample_size "720,1280" \
     --gpu_memory_mode model_cpu_offload_and_qfloat8 \
     --ulysses_degree 1 \
-    --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+    --moge_pretrained Ruicheng/moge-2-vitl \
     --moge_version v2 \
     --ring_degree 1
 
@@ -80,7 +80,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --negative_prompt "animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
-  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+  --moge_pretrained Ruicheng/moge-2-vitl \
   --auto_center_depth_quantile 0.2 \
   --translation_reference_depth_scale 0.95 \
   --total_movement_distance_factor 1.5 \
@@ -113,7 +113,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --camera_only \
   --preset_indices 0 \
   --moge_version v2 \
-  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
+  --moge_pretrained Ruicheng/moge-2-vitl \
   --auto_center_depth_quantile 0.2 \
   --translation_reference_depth_scale 0.95 \
   --total_movement_distance_factor 1.5 \
@@ -207,7 +207,9 @@ pixi run python inference/versecrafter_inference.py \
   - `16 fps`
   - `5.0625 s`
 - 关键说明:
-  - `moge_version=v2` 默认会走 `Ruicheng/moge-2-vitl-normal`, 如果你不想下载它, 必须显式传本地 `--moge_pretrained`.
+  - `moge_version=v2` 默认会走 `Ruicheng/moge-2-vitl-normal`.
+  - 如果你想固定使用 `moge-2-vitl`, 更稳妥的写法是显式传 `--moge_pretrained Ruicheng/moge-2-vitl`.
+  - 如果你一定要传本地文件, 要用当前用户自己可读的路径, 不要写成 `/root/.cache/...`.
   - VerseCrafter 双卡 Step 6 依赖 `xfuser` 和 `yunchang`, 没装的话会在最终 `torchrun` 阶段报 `RuntimeError: xfuser is not installed.`.
 
 ### 6.1 多卡前置依赖安装
@@ -225,44 +227,45 @@ pixi run pip install xfuser==0.4.2 yunchang==0.6.2 \
 
 ### 6.2 整链路命令
 
+#### 单卡
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
-  --input_image_path 'demo_data/nt1/a.png' \
-  --output_root demo_data/nt1 \
+  --input_image_path 'demo_data/my7/d.png' \
+  --output_root demo_data/my7 \
   --transformer_path model/VerseCrafter \
-  --prompt "An exhibition hall showcasing aircraft and automobiles.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
-  --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
+  --prompt "A realistic natural video of the original scene, 新海诚卡通风格博物馆,卡通描边,保持束,保留好场景的体积光 / God rays,光束、光柱,镜头光晕,辉光,slight camera motion, high detail." \
+  --negative_prompt "粉尘,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
-  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
-  --auto_center_depth_quantile 0.35 \
+  --moge_pretrained Ruicheng/moge-2-vitl \
+  --auto_center_depth_quantile 0.2 \
   --translation_reference_depth_scale 0.95 \
-  --total_movement_distance_factor 1.0 \
+  --total_movement_distance_factor 1.5 \
   --sample_size "720,1280" \
   --num_inference_steps 60 \
   --gpu_memory_mode model_cpu_offload \
-  --ulysses_degree 2 \
+  --ulysses_degree 1 \
   --ring_degree 1 \
-  --nproc_per_node 2 \
+  --nproc_per_node 1 \
   --guidance_scale 5.0 \
   --seed 2025 \
-  --fps 24
+  --fps 16
 ```
 
 
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
-  --input_image_path 'demo_data/nt2/b.png' \
-  --output_root demo_data/nt2 \
+  --input_image_path 'demo_data/my7/d.png' \
+  --output_root demo_data/my7 \
   --transformer_path model/VerseCrafter \
   --prompt "An exhibition hall showcasing aircraft and automobiles.There are some white lines on the ground.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
   --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
   --camera_only \
   --moge_version v2 \
-  --moge_pretrained /root/.cache/huggingface/hub/models--Ruicheng--moge-2-vitl/snapshots/39c4d5e957afe587e04eec59dc2bcc3be5ecd968/model.pt \
-  --auto_center_depth_quantile 0.35 \
+  --moge_pretrained Ruicheng/moge-2-vitl \
+  --auto_center_depth_quantile 0.2 \
   --translation_reference_depth_scale 0.95 \
-  --total_movement_distance_factor 1.0 \
+  --total_movement_distance_factor 1.5 \
   --sample_size "720,1280" \
   --known_horizontal_fov_degrees 90 \
   --num_inference_steps 60 \

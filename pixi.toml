@@ -15,13 +15,14 @@ setuptools = "*"
 wheel = "*"
 pytest = "*"
 
-# 与 Grounded-SAM-2 / SAM2 约束对齐, 避免安装时再被 pip 回滚或升级.
-pytorch = "2.3.1.*"
-torchvision = "0.18.1.*"
-torchaudio = "2.3.1.*"
-pytorch-cuda = "12.1.*"
-
 [pypi-dependencies]
+# PyTorch 官方 cu128 wheel.
+# 这里不用 conda 的 `pytorch-cuda`, 因为当前 channels 下没有 `12.8.*` 候选包.
+# 直接固定到已在 Blackwell 现场验证通过的 wheel 组合, 避免 `pixi install` 回滚现场成功状态.
+torch = { version = "==2.7.0", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "==0.22.0", index = "https://download.pytorch.org/whl/cu128" }
+torchaudio = { version = "==2.7.0", index = "https://download.pytorch.org/whl/cu128" }
+
 # 根仓库推理依赖.
 pillow = "*"
 einops = "*"
@@ -67,41 +68,18 @@ yapf = "*"
 # MoGe 通过 git 安装, 保持与原 README 的获取方式一致.
 install-moge = "python -m pip install git+https://github.com/microsoft/MoGe.git"
 
-# Grounded-SAM-2 与 GroundingDINO 仍保留原始 editable / no-build-isolation 语义.
-install-grounded-sam2 = "python -m pip install -e ./third_party/Grounded-SAM-2"
+# Grounded-SAM-2 与 GroundingDINO 都直接复用当前 Pixi 环境里的 torch / setuptools,
+# 避免 editable 安装时再拉一整套隔离构建依赖, 白白浪费代理流量.
+install-grounded-sam2 = "bash ./scripts/install_grounded_sam2.sh"
 install-grounding-dino = "python -m pip install --no-build-isolation -e ./third_party/Grounded-SAM-2/grounding_dino"
 
 # flash-attn 默认只保留源码安装路径, 这里主动限流编译并发.
 # 默认至少预留 4 个 CPU, 避免 bootstrap 把整机打满.
-install-flash-attn = { cmd = ["bash", "-lc", """
-set -euo pipefail
-
-# 如果用户已经显式指定 MAX_JOBS, 则尊重手动覆盖.
-if [ -n "${MAX_JOBS:-}" ]; then
-  jobs="${MAX_JOBS}"
-  echo "[install-flash-attn] 使用外部指定的 MAX_JOBS=${jobs}"
-else
-  cpu_total="$(nproc)"
-  reserve="${FLASH_ATTN_RESERVED_CPUS:-4}"
-
-  if ! [[ "${reserve}" =~ ^[0-9]+$ ]]; then
-    echo "[install-flash-attn] FLASH_ATTN_RESERVED_CPUS 必须是非负整数, 当前值: ${reserve}" >&2
-    exit 1
-  fi
-
-  jobs=$(( cpu_total > reserve ? cpu_total - reserve : 1 ))
-  echo "[install-flash-attn] cpu_total=${cpu_total}, reserved=${reserve}, MAX_JOBS=${jobs}"
-fi
-
-MAX_JOBS="${jobs}" python -m pip install --no-build-isolation flash-attn
-"""] }
+install-flash-attn = "bash ./scripts/install_flash_attn.sh"
 
 # pytorch3d 仍按上游推荐从源码安装.
-# 这里避免使用 Pixi 默认 shell 不支持的 Bash `if`, 改成 and/or list.
-install-pytorch3d = """
-git clone https://github.com/facebookresearch/pytorch3d.git pytorch3d || test -d pytorch3d
-&& python -m pip install --no-build-isolation ./pytorch3d
-"""
+# 为避免复杂 shell 逻辑再次被 Pixi 内联解析器误伤, 这里也外提到独立脚本.
+install-pytorch3d = "bash ./scripts/install_pytorch3d.sh"
 
 # 一次性补齐需要特殊安装参数的扩展依赖.
 bootstrap = { depends-on = ["install-moge", "install-grounded-sam2", "install-grounding-dino", "install-flash-attn", "install-pytorch3d"] }
