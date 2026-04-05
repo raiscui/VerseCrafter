@@ -401,3 +401,43 @@
 - 对当前这条命令, 更准确的表述是:
   - raiscui 没引入首帧特判本身
   - 但 raiscui 引入的多轨迹 + `camera_only` 使用方式, 更容易把旧问题暴露出来
+
+## [2026-04-05 07:18:09 UTC] 任务名称: 给多轨迹前几帧增加 hold/ease-in
+
+### 任务内容
+- 直接实现“给轨迹前 3-5 帧加 hold/ease-in”.
+- 优先从轨迹生成层修复, 不先改推理阶段首帧特判逻辑.
+
+### 完成过程
+- 先读 `single_image_multi_trajectory_lib.py` 与现有 lib/smoke 测试.
+- 决定不增加新的 CLI 参数, 先把默认行为改成:
+  - 前 2 帧 hold
+  - 到第 5 帧追平原始轨迹
+- 在轨迹库里新增统一的 lead-in 帧索引重映射, 并同时接到:
+  - linear 轨迹
+  - orbit 轨迹
+- 新增两条回归测试:
+  - linear 开场缓动后追平
+  - orbit 开场缓动后追平
+- 顺手修正了几条早已和当前 preset 漂移的测试:
+  - `clockwise_elliptical` 名称
+  - 相关 movement distance
+  - `left` / `right` 注视偏移断言
+
+### 验证结果
+- `pixi run python -m py_compile inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+  - `15 passed in 0.14s`
+- `pixi run python -m py_compile tests/test_single_image_multi_trajectory_smoke.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+  - `4 passed in 0.74s`
+- 额外动态检查确认:
+  - `left` 前几帧位移明显减缓
+  - `clockwise` 前几帧位移范数明显减缓
+  - 第 5 帧后与原轨迹重新对齐
+
+### 总结感悟
+- 这次修复最有价值的点, 是把“前几帧更稳”和“整段镜头节奏不被拖慢”同时满足了.
+- 对这类时序输入问题, 直接在输入条件层做平滑, 往往比继续堆 prompt 更稳.

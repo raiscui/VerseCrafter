@@ -40,6 +40,8 @@ DEFAULT_FRAME_STEP = 1
 DEFAULT_RADIUS_X_FACTOR = 0.15
 DEFAULT_RADIUS_Y_FACTOR = 0.10
 DEFAULT_NUM_CIRCLES = 2
+DEFAULT_LEAD_IN_FRAMES = 5
+DEFAULT_LEAD_IN_HOLD_FRAMES = 2
 LINEAR_DIAGONAL_UP_VERTICAL_SCALE = 0.6
 # LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = LINEAR_DIAGONAL_UP_VERTICAL_SCALE / 0.8  #  朝下更给力
 LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = 0.8  #  原始画面镜头在上方, 需要运动 朝下更给力点
@@ -188,6 +190,53 @@ def _sorted_object_ids(values: Iterable[str]) -> list[str]:
         return (0, int(text)) if text.isdigit() else (1, text)
 
     return sorted((str(value) for value in values), key=sort_key)
+
+
+def _ease_in_quadratic01(value: np.ndarray) -> np.ndarray:
+    """把 `[0, 1]` 内的进度压成只会“更慢起步”的二次缓入曲线."""
+
+    clipped = np.clip(value.astype(np.float32), 0.0, 1.0)
+    return clipped * clipped
+
+
+def _build_lead_in_frame_indices(
+    *,
+    num_frames: int,
+    lead_in_frames: int,
+    hold_frames: int,
+) -> np.ndarray:
+    """构造“前段缓动, 后段保持原节奏”的虚拟帧索引.
+
+    设计目标有两个:
+    1. 前几帧先 hold / ease-in, 避免第 1 帧立刻出现明显视差.
+    2. 到 lead-in 结束点后追平原轨迹, 不要把整条轨迹都拖慢.
+    """
+
+    indices = np.arange(num_frames, dtype=np.float32)
+    if num_frames <= 1 or lead_in_frames <= 0:
+        return indices
+
+    # `lead_in_end` 表示“到这一帧为止已经追平原始轨迹”.
+    # 例如默认值 5, 就表示第 5 帧开始恢复到原来的时间进度.
+    lead_in_end = min(int(lead_in_frames), num_frames - 1)
+    if lead_in_end <= 0:
+        return indices
+
+    # `hold_frames` 表示开头完全静止的帧数.
+    # 至少把第 0 帧 hold 住, 避免出现“刚开始就抖一下”.
+    hold_count = max(1, int(hold_frames))
+    hold_count = min(hold_count, lead_in_end)
+    indices[:hold_count] = 0.0
+
+    if hold_count > lead_in_end:
+        return indices
+
+    # 这里把 `hold_count..lead_in_end` 这一段重新映射到同样的终点.
+    # 这样前半段更缓, 但到 lead-in 结束后就能无缝接回原轨迹.
+    eased_frame_indices = np.arange(hold_count, lead_in_end + 1, dtype=np.float32)
+    eased_progress = (eased_frame_indices - float(hold_count - 1)) / float(lead_in_end - hold_count + 1)
+    indices[hold_count : lead_in_end + 1] = _ease_in_quadratic01(eased_progress) * float(lead_in_end)
+    return indices
 
 
 def ensure_parent_dir(path: Path) -> None:
@@ -394,12 +443,19 @@ def _generate_linear_offsets_cv(
     movement_distance: float,
     translation_reference_depth: float,
     num_frames: int,
+    lead_in_frames: int,
+    hold_frames: int,
 ) -> np.ndarray:
     """按 Lyra 的线性轨迹公式生成 OpenCV 位移序列."""
 
     direction = np.asarray(direction_cv, dtype=np.float32).reshape(3)
+    virtual_frame_indices = _build_lead_in_frame_indices(
+        num_frames=num_frames,
+        lead_in_frames=lead_in_frames,
+        hold_frames=hold_frames,
+    )
     offsets: list[np.ndarray] = []
-    for frame_index in range(num_frames):
+    for frame_index in virtual_frame_indices:
         scalar = frame_index * movement_distance * translation_reference_depth / float(num_frames)
         # 线性 preset 的差异全部收进方向向量.
         # 这样新增平移动作时, 不需要继续扩展名字分支.
@@ -418,6 +474,8 @@ def _generate_orbit_offsets_cv(
     radius_y_factor: float,
     num_circles: int,
     orbit_direction: float,
+    lead_in_frames: int,
+    hold_frames: int,
 ) -> np.ndarray:
     """按 Lyra 的 spiral/orbit 公式生成 OpenCV 位移序列.
 
@@ -428,9 +486,14 @@ def _generate_orbit_offsets_cv(
     radius_x = movement_distance * radius_x_factor
     radius_y = movement_distance * radius_y_factor
     theta_max = 2.0 * np.pi * float(num_circles)
+    virtual_frame_indices = _build_lead_in_frame_indices(
+        num_frames=num_frames,
+        lead_in_frames=lead_in_frames,
+        hold_frames=hold_frames,
+    )
 
     offsets: list[np.ndarray] = []
-    for frame_index in range(num_frames):
+    for frame_index in virtual_frame_indices:
         if num_frames == 1:
             theta = 0.0
         else:
@@ -501,6 +564,8 @@ def generate_blender_camera_trajectory(
     radius_x_factor: float = DEFAULT_RADIUS_X_FACTOR,
     radius_y_factor: float = DEFAULT_RADIUS_Y_FACTOR,
     num_circles: int = DEFAULT_NUM_CIRCLES,
+    lead_in_frames: int = DEFAULT_LEAD_IN_FRAMES,
+    hold_frames: int = DEFAULT_LEAD_IN_HOLD_FRAMES,
 ) -> np.ndarray:
     """生成与 Blender 导出兼容的 `extrinsics` 序列.
 
@@ -515,6 +580,10 @@ def generate_blender_camera_trajectory(
         raise ValueError(f"Unsupported camera rotation mode: {camera_rotation}")
     if num_frames <= 0:
         raise ValueError(f"num_frames must be positive, got {num_frames}")
+    if lead_in_frames < 0:
+        raise ValueError(f"lead_in_frames must be non-negative, got {lead_in_frames}")
+    if hold_frames < 0:
+        raise ValueError(f"hold_frames must be non-negative, got {hold_frames}")
 
     preset = TRAJECTORY_PRESET_BY_NAME[trajectory_name]
 
@@ -529,6 +598,8 @@ def generate_blender_camera_trajectory(
             radius_y_factor=radius_y_factor * preset.orbit_radius_scale,
             num_circles=num_circles,
             orbit_direction=preset.orbit_direction,
+            lead_in_frames=lead_in_frames,
+            hold_frames=hold_frames,
         )
     elif preset.kind == "linear":
         if preset.linear_direction_cv is None:
@@ -538,6 +609,8 @@ def generate_blender_camera_trajectory(
             movement_distance=movement_distance,
             translation_reference_depth=translation_reference_depth,
             num_frames=num_frames,
+            lead_in_frames=lead_in_frames,
+            hold_frames=hold_frames,
         )
     else:
         raise ValueError(f"Unsupported trajectory kind: {preset.kind}")

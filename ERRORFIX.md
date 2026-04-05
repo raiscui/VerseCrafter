@@ -125,3 +125,37 @@
   - `left_up` 的 look-at 目标点 `x < 0`
   - `right_up` 的 look-at 目标点 `x > 0`
   - 普通 `left` / `right` 仍保持中心注视
+
+## [2026-04-05 07:18:09 UTC] 问题: 多轨迹视频开头几帧容易跳动, 因为第 1 帧立刻进入正常位移
+
+### 问题现象
+- 在 `single_image_multi_trajectory.py` 生成的视频里, 最开始几帧更容易出现跳动或质量下滑.
+- 已有排查表明, 推理阶段本来就存在“第 0 帧真图锚定 -> 第 1 帧 render”断层.
+- 多轨迹路径又让相机在第 1 帧立刻进入正常运动, 把这个断层进一步放大.
+
+### 原因判断
+- 已验证结论:
+  - 轨迹库原先没有开场 hold/ease-in.
+  - linear / orbit 都从第 1 帧开始直接按正常公式运动.
+  - 这样会让第 1 帧 render 和原图之间的域差更快暴露到生成结果里.
+
+### 修复/处置
+- 在 `inference/single_image_multi_trajectory_lib.py` 新增统一的 lead-in 帧索引重映射.
+- 默认策略:
+  - 前 2 帧 hold
+  - 到第 5 帧追平原始轨迹
+- 线性和平移轨迹都接入同一套前段缓入逻辑.
+
+### 验证结果
+- `pixi run python -m py_compile inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+  - `15 passed in 0.14s`
+- `pixi run python -m py_compile tests/test_single_image_multi_trajectory_smoke.py`
+  - 通过
+- `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+  - `4 passed in 0.74s`
+- 动态数值验证:
+  - `left` 轨迹前几帧位移从 `0.055556 / 0.111111 / 0.166667 / 0.222222`
+    变为 `0.0 / 0.017361 / 0.069444 / 0.15625`
+  - `clockwise` 前几帧位移范数同样明显降低, 且第 5 帧后追平原轨迹

@@ -15,7 +15,7 @@ EXPECTED_PRESET_NAMES = [
     "zoom_out",
     "zoom_in",
     "clockwise",
-    "clockwise_0.65",
+    "clockwise_elliptical",
     "counterclockwise_1.5",
     "left_up",
     "right_up",
@@ -141,7 +141,7 @@ def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) ->
     )
 
     assert "--gpu_memory_mode model_cpu_offload_and_qfloat8" in result.stdout
-    assert "- [6] clockwise_0.65" in result.stdout
+    assert "- [6] clockwise_elliptical" in result.stdout
     assert "- [7] counterclockwise_1.5" in result.stdout
     assert "- [8] left_up" in result.stdout
     assert "- [11] right_down" in result.stdout

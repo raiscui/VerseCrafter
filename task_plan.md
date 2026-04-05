@@ -349,3 +349,50 @@
 ### 状态
 **任务已完成**
 - 已完成当前命令下放大因素的证据排序.
+
+## [2026-04-05 07:18:09 UTC] 新任务启动
+
+### 目标
+- 给多轨迹前几帧增加 hold/ease-in, 降低开头跳动.
+- 保持尾段轨迹节奏和终点不变, 避免整条镜头被拖慢.
+- 用回归测试和动态数值一起验证.
+
+### 阶段
+- [x] 阶段1: 阅读轨迹库与现有测试, 选定最小改动方案
+- [x] 阶段2: 在轨迹生成层实现默认 lead-in
+- [x] 阶段3: 补充 / 修正回归测试并完成验证
+
+### 做出的决定
+- 决定: 先不暴露新的 CLI 参数.
+  - 理由: 这次先把默认行为调顺, 以最小改动解决当前最明显的问题.
+- 决定: 使用“前 2 帧 hold, 到第 5 帧追平”的统一 lead-in 重映射.
+  - 理由: 这样既能明显减轻开头视差, 又不会拖慢整条镜头.
+
+### 验证记录
+- 代码实现:
+  - 在 `single_image_multi_trajectory_lib.py` 新增 lead-in 帧索引重映射.
+  - linear / orbit 都统一接入该逻辑.
+- 测试验证:
+  - `pixi run python -m py_compile inference/single_image_multi_trajectory_lib.py tests/test_single_image_multi_trajectory_lib.py`
+  - `pixi run pytest tests/test_single_image_multi_trajectory_lib.py -q`
+    - `15 passed in 0.14s`
+  - `pixi run python -m py_compile tests/test_single_image_multi_trajectory_smoke.py`
+  - `pixi run pytest tests/test_single_image_multi_trajectory_smoke.py -q`
+    - `4 passed in 0.74s`
+- 动态数值验证:
+  - `left` 前几帧位移从:
+    - `[0.055556, 0.111111, 0.166667, 0.222222, 0.277778, ...]`
+    变成:
+    - `[0.0, 0.017361, 0.069444, 0.15625, 0.277778, ...]`
+  - `clockwise` 前几帧位移范数从:
+    - `[0.062436, 0.135208, 0.199237, 0.225, 0.199237, ...]`
+    变成:
+    - `[0.0, 0.018533, 0.079929, 0.189354, 0.199237, ...]`
+
+### 结论
+- 已实现“前几帧更稳, 第 5 帧后追平”的 lead-in 修复.
+- 当前没有证据表明这次改动破坏了批处理脚本外层契约.
+
+### 状态
+**任务已完成**
+- 已完成代码修改, 回归测试, smoke 测试和动态数值检查.

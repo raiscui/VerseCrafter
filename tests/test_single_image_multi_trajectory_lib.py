@@ -28,7 +28,7 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
         "zoom_out",
         "zoom_in",
         "clockwise",
-        "clockwise_0.65",
+        "clockwise_elliptical",
         "counterclockwise_1.5",
         "left_up",
         "right_up",
@@ -37,7 +37,7 @@ def test_get_preset_run_specs_uses_deterministic_midpoint_distances() -> None:
     ]
     assert np.allclose(
         [spec["movement_distance"] for spec in specs],
-        [0.375, 0.375, 0.225, 0.525, 0.525, 0.75, 0.75, 0.75, 0.375, 0.375, 0.375, 0.375],
+        [0.375, 0.375, 0.225, 0.525, 0.525, 0.75, 0.975, 0.75, 0.375, 0.375, 0.375, 0.375],
     )
     assert specs[0]["camera_motion_prompt"] == "Camera is moving to the left"
     assert specs[7]["camera_motion_prompt"] == "Camera is orbiting counterclockwise around the scene with a wider radius"
@@ -141,6 +141,82 @@ def test_clockwise_trajectory_orbits_in_blender_xz_plane() -> None:
     assert np.max(np.abs(translations[:, 2])) > 0.0
 
 
+def test_linear_trajectory_lead_in_holds_then_catches_up_to_original_path() -> None:
+    common_kwargs = {
+        "movement_distance": 0.5,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+    }
+
+    baseline = generate_blender_camera_trajectory(
+        "left",
+        **common_kwargs,
+        lead_in_frames=0,
+        hold_frames=0,
+    )
+    eased = generate_blender_camera_trajectory(
+        "left",
+        **common_kwargs,
+        lead_in_frames=5,
+        hold_frames=2,
+    )
+
+    baseline_x = np.abs(baseline[:, 0, 3])
+    eased_x = np.abs(eased[:, 0, 3])
+
+    # 前两帧完全 hold 住, 开头不要立刻出现明显横向视差.
+    assert np.isclose(eased_x[0], 0.0, atol=1e-6)
+    assert np.isclose(eased_x[1], 0.0, atol=1e-6)
+
+    # lead-in 期间的位移要明显小于原始轨迹, 但始终保持单调前进.
+    assert eased_x[2] < baseline_x[2]
+    assert eased_x[3] < baseline_x[3]
+    assert eased_x[4] < baseline_x[4]
+    assert np.all(np.diff(eased_x[:6]) >= -1e-6)
+
+    # 到第 5 帧后要追平原始轨迹, 不要把整条镜头都拖慢.
+    assert np.allclose(eased[5:, :3, 3], baseline[5:, :3, 3], atol=1e-6)
+
+
+def test_orbit_trajectory_lead_in_reduces_early_arc_motion_without_changing_tail() -> None:
+    common_kwargs = {
+        "movement_distance": 0.75,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+        "num_circles": 1,
+    }
+
+    baseline = generate_blender_camera_trajectory(
+        "clockwise",
+        **common_kwargs,
+        lead_in_frames=0,
+        hold_frames=0,
+    )
+    eased = generate_blender_camera_trajectory(
+        "clockwise",
+        **common_kwargs,
+        lead_in_frames=5,
+        hold_frames=2,
+    )
+
+    baseline_translations = baseline[:, :3, 3]
+    eased_translations = eased[:, :3, 3]
+
+    baseline_norm = np.linalg.norm(baseline_translations, axis=1)
+    eased_norm = np.linalg.norm(eased_translations, axis=1)
+
+    # orbit 同样应该在开头先稳一下, 再慢慢进入弧线.
+    assert np.allclose(eased_translations[0], np.zeros(3, dtype=np.float32), atol=1e-6)
+    assert np.allclose(eased_translations[1], np.zeros(3, dtype=np.float32), atol=1e-6)
+    assert eased_norm[2] < baseline_norm[2]
+    assert eased_norm[3] < baseline_norm[3]
+
+    # 追平点之后要完全回到原轨迹, 保持尾段时长和构图不变.
+    assert np.allclose(eased_translations[5:], baseline_translations[5:], atol=1e-6)
+
+
 def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     common_kwargs = {
         "movement_distance": 0.75,
@@ -151,7 +227,7 @@ def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     }
 
     baseline = generate_blender_camera_trajectory("clockwise", **common_kwargs)
-    smaller = generate_blender_camera_trajectory("clockwise_0.65", **common_kwargs)
+    smaller = generate_blender_camera_trajectory("clockwise_elliptical", **common_kwargs)
     wider_counterclockwise = generate_blender_camera_trajectory("counterclockwise_1.5", **common_kwargs)
 
     baseline_translations = baseline[:, :3, 3]
@@ -161,22 +237,19 @@ def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     assert np.allclose(smaller_translations[:, 1], 0.0, atol=1e-6)
     assert np.allclose(wider_counterclockwise_translations[:, 1], 0.0, atol=1e-6)
 
-    # `clockwise_0.65` 现在不只是半径缩小,
+    # `clockwise_elliptical` 现在不只是半径变化,
     # 还带着更小的 orbit_direction, 所以不能再按逐帧等比例去比.
     # 这里改为验证“半径倍率”和“顺/逆时针方向”这两个真正稳定的契约.
-    assert np.isclose(
-        np.max(np.linalg.norm(smaller_translations, axis=1)),
-        np.max(np.linalg.norm(baseline_translations, axis=1)) * 0.65,
-        atol=1e-6,
-    )
-    assert np.isclose(
-        np.max(np.linalg.norm(wider_counterclockwise_translations, axis=1)),
-        np.max(np.linalg.norm(baseline_translations, axis=1)) * 1.5,
-        atol=5e-4,
-    )
-    assert baseline_translations[1, 2] < 0.0
-    assert smaller_translations[1, 2] < 0.0
-    assert wider_counterclockwise_translations[1, 2] > 0.0
+    assert np.max(np.linalg.norm(smaller_translations, axis=1)) > np.max(np.linalg.norm(baseline_translations, axis=1))
+    assert np.max(np.linalg.norm(wider_counterclockwise_translations, axis=1)) > np.max(np.linalg.norm(smaller_translations, axis=1))
+    assert np.max(np.abs(smaller_translations[:, 0])) > np.max(np.abs(baseline_translations[:, 0]))
+    assert np.max(np.abs(wider_counterclockwise_translations[:, 0])) > np.max(np.abs(smaller_translations[:, 0]))
+    assert np.max(np.abs(smaller_translations[:, 2])) > np.max(np.abs(baseline_translations[:, 2]))
+    assert np.max(np.abs(wider_counterclockwise_translations[:, 2])) > np.max(np.abs(smaller_translations[:, 2]))
+    # 默认 lead-in 会让第 0-1 帧更稳, 所以方向断言改到第一个明显进入弧线的采样点.
+    assert baseline_translations[2, 2] < 0.0
+    assert smaller_translations[2, 2] < 0.0
+    assert wider_counterclockwise_translations[2, 2] > 0.0
 
 
 def test_diagonal_linear_variants_preserve_horizontal_and_vertical_scales() -> None:
@@ -252,8 +325,9 @@ def test_left_up_and_right_up_shift_center_facing_look_at_horizontally() -> None
     left_up_target_x = infer_target_x(left_up)
     right_up_target_x = infer_target_x(right_up)
 
-    assert np.allclose(left_target_x, 0.0, atol=1e-6)
-    assert np.allclose(right_target_x, 0.0, atol=1e-6)
+    # `left` / `right` 现在也带有轻微水平注视偏移, 目的是让镜头语言更自然.
+    assert np.allclose(left_target_x, -0.075, atol=1e-6)
+    assert np.allclose(right_target_x, 0.075, atol=1e-6)
     assert np.all(left_up_target_x < -1e-6)
     assert np.all(right_up_target_x > 1e-6)
 
