@@ -256,3 +256,92 @@ def test_dry_run_auto_detects_my_series_and_announces_known_fov_override(tmp_pat
 
     assert "- intrinsics: known_horizontal_fov (90.0 deg horizontal FOV)" in result.stdout
     assert "auto-matched known 3ds Max series 'my7'" in result.stdout
+
+
+def test_dry_run_explicit_known_horizontal_fov_flows_into_step1_command(tmp_path: Path) -> None:
+    input_image = tmp_path / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "explicit_fov_output"
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--known_horizontal_fov_degrees",
+        "90",
+        "--dry_run",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "- intrinsics: known_horizontal_fov (90.0 deg horizontal FOV)" in result.stdout
+    assert "--fov_x 90.0" in result.stdout
+
+
+def test_known_horizontal_fov_dry_run_invalidates_legacy_reused_depth_without_matching_metadata(
+    tmp_path: Path,
+) -> None:
+    input_image = tmp_path / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "legacy_depth_output"
+    estimated_depth_dir = output_root / "shared" / "estimated_depth"
+    estimated_depth_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        estimated_depth_dir / "depth_intrinsics.npz",
+        depth=np.full((8, 8), 2.0, dtype=np.float16),
+        intrinsic=np.eye(3, dtype=np.float16),
+    )
+    preset_dir = output_root / "0"
+    render_dir = preset_dir / "rendering_4D_maps"
+    generated_dir = preset_dir / "generated_videos"
+    for file_name in [
+        "background_RGB.mp4",
+        "background_depth.mp4",
+        "3D_gaussian_RGB.mp4",
+        "3D_gaussian_depth.mp4",
+        "merged_mask.mp4",
+    ]:
+        _write_nonempty_file(render_dir / file_name)
+    _write_nonempty_file(generated_dir / "generated_video_0.mp4")
+
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--known_horizontal_fov_degrees",
+        "90",
+        "--preset_indices",
+        "0",
+        "--dry_run",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "- depth: run" in result.stdout
+    assert "lacks matching known-FOV Step 1 metadata" in result.stdout
+    assert "--fov_x 90.0" in result.stdout
+    assert "  render: run ->" in result.stdout
+    assert "  generation: run ->" in result.stdout

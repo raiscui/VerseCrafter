@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import importlib
 import json
 import logging
 import os
@@ -179,6 +180,8 @@ def build_manifest(
             "depth_npz": str((output_root / "shared" / "estimated_depth" / "depth_intrinsics.npz").resolve()),
             "gaussian_json": str((output_root / "shared" / "fitted_3D_gaussian" / "gaussian_params.json").resolve()),
             "depth_status": "pending",
+            "depth_estimation_intrinsic_mode": "pending",
+            "depth_estimation_horizontal_fov_degrees": None,
             "intrinsic_status": "pending",
             "intrinsic_mode": "pending",
             "intrinsic_source": "pending",
@@ -344,8 +347,15 @@ def run_command(command: list[str], *, cwd: Path) -> None:
     这里统一收口, 便于 manifest 记录和日志排查.
     """
 
+    env = os.environ.copy()
+    if "TORCH_CUDA_ARCH_LIST" not in env:
+        detected_arch = detect_machine_cuda_arch_list()
+        if detected_arch is not None:
+            env["TORCH_CUDA_ARCH_LIST"] = detected_arch
+            logger.info("Using detected TORCH_CUDA_ARCH_LIST=%s", detected_arch)
+
     logger.info("Running command: %s", shlex.join(command))
-    subprocess.run(command, cwd=str(cwd), check=True)
+    subprocess.run(command, cwd=str(cwd), check=True, env=env)
 
 
 def is_cuda_device(device_name: str) -> bool:
@@ -390,6 +400,27 @@ def probe_torch_cuda_runtime() -> dict[str, Any]:
         payload["device_name_0_error"] = repr(exc)
 
     return payload
+
+
+def detect_machine_cuda_arch_list() -> str | None:
+    """自动推断当前机器适合的单一 CUDA arch.
+
+    这个项目里更偏向“单机单卡系”的 machine-specific arch.
+    对当前可见 GPU 都同构的常见工作站/服务器场景, 直接取首卡 capability 即可.
+    """
+
+    try:
+        import torch  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return None
+
+    try:
+        if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:
+            return None
+        major, minor = torch.cuda.get_device_capability(0)
+    except Exception:  # noqa: BLE001
+        return None
+    return f"{major}.{minor}"
 
 
 def detect_mig_no_instance_hint() -> str | None:
@@ -630,6 +661,89 @@ def build_multi_gpu_preflight_error_message(
     return "\n".join(lines)
 
 
+def probe_multi_gpu_generation_backend() -> dict[str, Any]:
+    """探测 VerseCrafter Step 6 的多卡依赖栈是否真可用.
+
+    这里不只检查 `xfuser` 顶层包是否存在.
+    我们直接读取 VideoX-Fun 的 fuser 模块状态, 这样能拿到
+    `get_sp_group is None` 背后的真实导入错误.
+    """
+
+    videox_fun_path = PROJECT_ROOT / "third_party" / "VideoX-Fun"
+    if str(videox_fun_path) not in sys.path:
+        sys.path.insert(0, str(videox_fun_path))
+
+    payload: dict[str, Any] = {
+        "videox_fun_path": str(videox_fun_path),
+    }
+    try:
+        fuser = importlib.import_module("videox_fun.dist.fuser")
+    except Exception as exc:  # noqa: BLE001
+        payload["probe_error"] = repr(exc)
+        return payload
+
+    payload["fuser_module"] = getattr(fuser, "__file__", None)
+    payload["backend"] = getattr(fuser, "XFUSER_BACKEND", None)
+    payload["get_sp_group_available"] = getattr(fuser, "get_sp_group", None) is not None
+    payload["long_ctx_attention_available"] = getattr(fuser, "xFuserLongContextAttention", None) is not None
+    payload["import_error"] = getattr(fuser, "XFUSER_IMPORT_ERROR", None)
+    payload["import_traceback"] = getattr(fuser, "XFUSER_IMPORT_TRACEBACK", None)
+    return payload
+
+
+def build_multi_gpu_backend_error_message(
+    *,
+    required_reason: str,
+    backend_payload: dict[str, Any],
+) -> str:
+    """拼出多卡 xFuser 依赖栈不可用时的清晰报错."""
+
+    lines = [
+        "多卡预检失败: 当前 Step 6 计划启动 VerseCrafter 多卡推理, 但 VideoX-Fun 的 xFuser 后端不可用.",
+        f"- 触发原因: {required_reason}",
+        f"- videox_fun_path: {backend_payload.get('videox_fun_path', 'unknown')}",
+        f"- fuser module: {backend_payload.get('fuser_module', 'unknown')}",
+        f"- backend: {backend_payload.get('backend', 'unknown')}",
+        f"- get_sp_group available: {backend_payload.get('get_sp_group_available', False)}",
+        f"- xFuserLongContextAttention available: {backend_payload.get('long_ctx_attention_available', False)}",
+    ]
+
+    if backend_payload.get("probe_error") is not None:
+        lines.append(f"- probe_error: {backend_payload['probe_error']}")
+    if backend_payload.get("import_error") is not None:
+        lines.append(f"- import_error: {backend_payload['import_error']}")
+    if backend_payload.get("import_traceback") is not None:
+        lines.append("- import_traceback:")
+        lines.append(str(backend_payload["import_traceback"]))
+
+    lines.extend(
+        [
+            "- 说明: 这不一定代表顶层 `xfuser` 包没装, 也可能是其核心模块或依赖在导入时抛错.",
+            "- 建议1: 先用 `pixi run python -c \"import videox_fun.dist.fuser as f; print(f.XFUSER_IMPORT_ERROR); print(f.XFUSER_IMPORT_TRACEBACK)\"` 查看真实底层异常.",
+            "- 建议2: 如果你现在只是想先跑通生成, 可把 --nproc_per_node、--ulysses_degree、--ring_degree 都改成 1.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def ensure_multi_gpu_generation_backend_or_raise(
+    *,
+    required_reason: str,
+) -> None:
+    """在重型共享步骤前, 先确认 Step 6 的 xFuser 后端真的可用."""
+
+    backend_payload = probe_multi_gpu_generation_backend()
+    if backend_payload.get("get_sp_group_available") and backend_payload.get("long_ctx_attention_available"):
+        return
+
+    raise RuntimeError(
+        build_multi_gpu_backend_error_message(
+            required_reason=required_reason,
+            backend_payload=backend_payload,
+        )
+    )
+
+
 def ensure_requested_worker_topology_or_raise(
     *,
     required_reason: str,
@@ -750,6 +864,52 @@ def merge_manifest_defaults(existing: dict[str, Any] | None, fresh: dict[str, An
     return merged
 
 
+def resolve_depth_reuse_decision(
+    *,
+    args: argparse.Namespace,
+    depth_npz_path: Path,
+    override_plan: IntrinsicOverridePlan,
+    manifest: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """判断共享深度是否允许直接复用.
+
+    对显式/自动已知 FOV 场景, 仅有“改写共享 K”还不够:
+    如果 Step 1 当时没有带着同样的 FOV 重新推理, 深度本身也可能不一致.
+    因此这里要求 manifest 里已有匹配的 Step 1 FOV 元数据, 才允许复用旧深度.
+    """
+
+    if not args.resume or not is_existing_nonempty_file(depth_npz_path):
+        return False, None
+
+    if override_plan.mode != "known_horizontal_fov":
+        return True, None
+
+    shared = manifest.get("shared", {})
+    recorded_mode = shared.get("depth_estimation_intrinsic_mode")
+    recorded_fov = shared.get("depth_estimation_horizontal_fov_degrees")
+    if recorded_mode != "known_horizontal_fov" or recorded_fov is None:
+        return (
+            False,
+            "existing depth output lacks matching known-FOV Step 1 metadata, so MoGe depth will be regenerated",
+        )
+
+    try:
+        recorded_fov_value = float(recorded_fov)
+    except (TypeError, ValueError):
+        return (
+            False,
+            "existing depth output records an invalid known-FOV Step 1 value, so MoGe depth will be regenerated",
+        )
+
+    if not np.isclose(recorded_fov_value, float(override_plan.horizontal_fov_degrees), atol=1e-6):
+        return (
+            False,
+            "existing depth output was generated with a different known horizontal FOV, so MoGe depth will be regenerated",
+        )
+
+    return True, None
+
+
 def describe_command(command: list[str]) -> str:
     """把命令格式化成终端可读字符串."""
 
@@ -795,28 +955,37 @@ def emit_dry_run_plan(
     print(f"nproc_per_node: {args.nproc_per_node}")
     print("")
 
-    depth_reused = args.resume and is_existing_nonempty_file(depth_npz_path)
+    depth_reused, depth_reuse_reason = resolve_depth_reuse_decision(
+        args=args,
+        depth_npz_path=depth_npz_path,
+        override_plan=override_plan,
+        manifest=manifest,
+    )
     intrinsic_preview = None
     intrinsic_will_change = False
+    shared_geometry_changed = not depth_reused
     if depth_reused:
         intrinsic_preview = preview_shared_intrinsics(
             depth_npz_path=depth_npz_path,
             override_plan=override_plan,
         )
         intrinsic_will_change = bool(intrinsic_preview["changed"])
+        shared_geometry_changed = intrinsic_will_change
     segmentation_reused = args.resume and (
         is_camera_only_mask_dir(masks_dir) if args.camera_only else has_mask_pngs(masks_dir)
     )
     gaussian_reused = args.resume and (
         is_camera_only_gaussian_json(gaussian_json_path) if args.camera_only else is_existing_nonempty_file(gaussian_json_path)
     )
-    if intrinsic_will_change:
+    if shared_geometry_changed and not args.camera_only:
         gaussian_reused = False
 
     print("[Shared]")
     print(f"- depth: {'reuse' if depth_reused else 'run'} -> {depth_npz_path}")
     if not depth_reused:
-        print(f"  command: {describe_command(build_moge_command(args, estimated_depth_dir))}")
+        print(f"  command: {describe_command(build_moge_command(args, estimated_depth_dir, override_plan))}")
+        if depth_reuse_reason is not None:
+            print(f"  note: {depth_reuse_reason}")
     if override_plan.mode == "known_horizontal_fov":
         print(
             "- intrinsics: "
@@ -882,10 +1051,10 @@ def emit_dry_run_plan(
         generated_videos_dir = preset_dir / "generated_videos"
         existing_video = find_generated_video(generated_videos_dir)
         render_reused = args.resume and is_valid_render_output_dir(rendering_maps_dir)
-        if intrinsic_will_change:
+        if shared_geometry_changed:
             render_reused = False
         generation_reused = args.resume and existing_video is not None
-        if intrinsic_will_change:
+        if shared_geometry_changed:
             generation_reused = False
         generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
 
@@ -925,7 +1094,11 @@ def emit_dry_run_plan(
 # ============================================================================
 # Command builders
 # ============================================================================
-def build_moge_command(args: argparse.Namespace, estimated_depth_dir: Path) -> list[str]:
+def build_moge_command(
+    args: argparse.Namespace,
+    estimated_depth_dir: Path,
+    override_plan: IntrinsicOverridePlan,
+) -> list[str]:
     """构造 Step 1 命令."""
 
     command = [
@@ -941,6 +1114,8 @@ def build_moge_command(args: argparse.Namespace, estimated_depth_dir: Path) -> l
         "--device",
         args.device,
     ]
+    if override_plan.mode == "known_horizontal_fov":
+        command.extend(["--fov_x", str(float(override_plan.horizontal_fov_degrees))])
     if args.moge_pretrained is not None:
         command.extend(["--pretrained", args.moge_pretrained])
     if args.moge_fp16:
@@ -1069,14 +1244,21 @@ def build_generation_command(
     generation_prompt: str,
     rendering_maps_dir: Path,
     save_path: Path,
+    nproc_per_node_override: int | None = None,
+    ulysses_degree_override: int | None = None,
+    ring_degree_override: int | None = None,
 ) -> list[str]:
     """构造 Step 6 命令."""
 
+    nproc_per_node = args.nproc_per_node if nproc_per_node_override is None else int(nproc_per_node_override)
+    ulysses_degree = args.ulysses_degree if ulysses_degree_override is None else int(ulysses_degree_override)
+    ring_degree = args.ring_degree if ring_degree_override is None else int(ring_degree_override)
+
     command: list[str]
-    if args.nproc_per_node > 1:
+    if nproc_per_node > 1:
         command = [
             args.torchrun_bin,
-            f"--nproc-per-node={args.nproc_per_node}",
+            f"--nproc-per-node={nproc_per_node}",
             "inference/versecrafter_inference.py",
         ]
     else:
@@ -1104,9 +1286,9 @@ def build_generation_command(
             "--sample_size",
             args.sample_size,
             "--ulysses_degree",
-            str(args.ulysses_degree),
+            str(ulysses_degree),
             "--ring_degree",
-            str(args.ring_degree),
+            str(ring_degree),
             "--guidance_scale",
             str(args.guidance_scale),
             "--seed",
@@ -1118,6 +1300,58 @@ def build_generation_command(
         ]
     )
     return command
+
+
+def run_generation_command_with_fallback(
+    args: argparse.Namespace,
+    *,
+    generation_prompt: str,
+    rendering_maps_dir: Path,
+    save_path: Path,
+    runtime_nproc_per_node: int,
+    runtime_ulysses_degree: int,
+    runtime_ring_degree: int,
+) -> tuple[str, bool]:
+    """执行 Step 6, 必要时从多卡自动退回单卡.
+
+    返回:
+    - generation_status
+    - whether_single_gpu_fallback_activated
+    """
+
+    primary_command = build_generation_command(
+        args,
+        generation_prompt=generation_prompt,
+        rendering_maps_dir=rendering_maps_dir,
+        save_path=save_path,
+        nproc_per_node_override=runtime_nproc_per_node,
+        ulysses_degree_override=runtime_ulysses_degree,
+        ring_degree_override=runtime_ring_degree,
+    )
+    try:
+        run_command(primary_command, cwd=PROJECT_ROOT)
+        return "completed", False
+    except subprocess.CalledProcessError:
+        if runtime_nproc_per_node <= 1:
+            raise
+
+        logger.warning(
+            "Multi-GPU VerseCrafter generation failed; retrying this preset with single-GPU Step 6. "
+            "Subsequent presets will also use the single-GPU fallback runtime."
+        )
+        ensure_clean_path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        fallback_command = build_generation_command(
+            args,
+            generation_prompt=generation_prompt,
+            rendering_maps_dir=rendering_maps_dir,
+            save_path=save_path,
+            nproc_per_node_override=1,
+            ulysses_degree_override=1,
+            ring_degree_override=1,
+        )
+        run_command(fallback_command, cwd=PROJECT_ROOT)
+        return "completed_single_gpu_fallback", True
 
 
 # ============================================================================
@@ -1188,6 +1422,17 @@ def create_parser() -> argparse.ArgumentParser:
         "--moge_fp16",
         action="store_true",
         help="Run MoGe depth estimation in FP16. Useful on newer GPUs where xformers fp32 attention kernels are unavailable.",
+    )
+    parser.add_argument(
+        "--known_horizontal_fov_degrees",
+        type=float,
+        default=None,
+        help="Override the shared camera intrinsics with a known horizontal FOV in degrees and pass the same FOV into MoGe Step 1.",
+    )
+    parser.add_argument(
+        "--disable_auto_known_intrinsics",
+        action="store_true",
+        help="Disable the automatic 3ds Max known-intrinsics override for recognized my*/nt* series names.",
     )
     parser.add_argument("--sample_size", type=str, default="720,1280", help="Target sample size as 'height,width'")
     parser.add_argument(
@@ -1340,6 +1585,7 @@ def main() -> None:
     if args.preset_indices is not None:
         args.preset_indices = [int(spec["index"]) for spec in active_preset_specs]
     manifest = merge_manifest_defaults(load_manifest(manifest_path), build_manifest(args, output_root, all_preset_specs))
+    override_plan = resolve_intrinsic_override_plan(args, output_root=output_root)
 
     shared_dir = output_root / "shared"
     estimated_depth_dir = shared_dir / "estimated_depth"
@@ -1385,14 +1631,22 @@ def main() -> None:
                 ulysses_degree=args.ulysses_degree,
                 ring_degree=args.ring_degree,
             )
+            ensure_multi_gpu_generation_backend_or_raise(
+                required_reason=multi_gpu_required_reason,
+            )
 
         # ------------------------------------------------------------------
         # Shared step 1: depth estimation
         # ------------------------------------------------------------------
-        depth_reused = args.resume and is_existing_nonempty_file(depth_npz_path)
+        depth_reused, _depth_reuse_reason = resolve_depth_reuse_decision(
+            args=args,
+            depth_npz_path=depth_npz_path,
+            override_plan=override_plan,
+            manifest=manifest,
+        )
         if not depth_reused:
             ensure_clean_path(estimated_depth_dir)
-            run_command(build_moge_command(args, estimated_depth_dir), cwd=PROJECT_ROOT)
+            run_command(build_moge_command(args, estimated_depth_dir, override_plan), cwd=PROJECT_ROOT)
         validate_or_raise(
             is_existing_nonempty_file(depth_npz_path),
             f"Depth estimation output missing: {depth_npz_path}",
@@ -1402,7 +1656,14 @@ def main() -> None:
             override_plan=override_plan,
         )
         shared_intrinsic_changed = bool(intrinsic_sync["changed"])
+        shared_geometry_changed = (not depth_reused) or shared_intrinsic_changed
         manifest["shared"]["depth_status"] = "reused" if depth_reused else "completed"
+        manifest["shared"]["depth_estimation_intrinsic_mode"] = override_plan.mode
+        manifest["shared"]["depth_estimation_horizontal_fov_degrees"] = (
+            None
+            if override_plan.mode != "known_horizontal_fov"
+            else float(override_plan.horizontal_fov_degrees)
+        )
         if override_plan.mode == "known_horizontal_fov":
             manifest["shared"]["intrinsic_status"] = (
                 "known_horizontal_fov_overridden" if shared_intrinsic_changed else "known_horizontal_fov_reused"
@@ -1461,7 +1722,7 @@ def main() -> None:
             # ------------------------------------------------------------------
             gaussian_reused = (
                 args.resume
-                and not shared_intrinsic_changed
+                and not shared_geometry_changed
                 and is_existing_nonempty_file(gaussian_json_path)
             )
             if not gaussian_reused:
@@ -1509,6 +1770,9 @@ def main() -> None:
         save_manifest(manifest_path, manifest)
 
         any_trajectory_failed = False
+        runtime_generation_nproc_per_node = args.nproc_per_node
+        runtime_generation_ulysses_degree = args.ulysses_degree
+        runtime_generation_ring_degree = args.ring_degree
 
         # ------------------------------------------------------------------
         # Per-trajectory steps
@@ -1532,7 +1796,7 @@ def main() -> None:
                 existing_video = find_generated_video(generated_videos_dir)
                 if (
                     args.resume
-                    and not shared_intrinsic_changed
+                    and not shared_geometry_changed
                     and existing_video is not None
                     and is_valid_render_output_dir(rendering_maps_dir)
                 ):
@@ -1585,7 +1849,7 @@ def main() -> None:
                 # 3) Render 4D control maps
                 render_reused = (
                     args.resume
-                    and not shared_intrinsic_changed
+                    and not shared_geometry_changed
                     and is_valid_render_output_dir(rendering_maps_dir)
                 )
                 if not render_reused:
@@ -1614,27 +1878,31 @@ def main() -> None:
                 existing_video = find_generated_video(generated_videos_dir)
                 generation_reused = (
                     args.resume
-                    and not shared_intrinsic_changed
+                    and not shared_geometry_changed
                     and existing_video is not None
                 )
                 if not generation_reused:
                     ensure_clean_path(generated_videos_dir)
                     generated_videos_dir.mkdir(parents=True, exist_ok=True)
-                    run_command(
-                        build_generation_command(
-                            args,
-                            generation_prompt=generation_prompt,
-                            rendering_maps_dir=rendering_maps_dir,
-                            save_path=generated_videos_dir,
-                        ),
-                        cwd=PROJECT_ROOT,
+                    generation_status, activated_single_gpu_fallback = run_generation_command_with_fallback(
+                        args,
+                        generation_prompt=generation_prompt,
+                        rendering_maps_dir=rendering_maps_dir,
+                        save_path=generated_videos_dir,
+                        runtime_nproc_per_node=runtime_generation_nproc_per_node,
+                        runtime_ulysses_degree=runtime_generation_ulysses_degree,
+                        runtime_ring_degree=runtime_generation_ring_degree,
                     )
+                    if activated_single_gpu_fallback:
+                        runtime_generation_nproc_per_node = 1
+                        runtime_generation_ulysses_degree = 1
+                        runtime_generation_ring_degree = 1
                     existing_video = find_generated_video(generated_videos_dir)
                 validate_or_raise(
                     existing_video is not None,
                     f"VerseCrafter generation did not produce generated_video_*.mp4 under: {generated_videos_dir}",
                 )
-                trajectory_manifest["generation_status"] = "reused" if generation_reused else "completed"
+                trajectory_manifest["generation_status"] = "reused" if generation_reused else generation_status
                 trajectory_manifest["generated_video_path"] = str(existing_video)
                 trajectory_manifest["status"] = "completed"
                 trajectory_manifest["error"] = None

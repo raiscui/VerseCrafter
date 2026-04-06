@@ -17,11 +17,11 @@ pytest = "*"
 
 [pypi-dependencies]
 # PyTorch 官方 cu128 wheel.
-# 这里不用 conda 的 `pytorch-cuda`, 因为当前 channels 下没有 `12.8.*` 候选包.
-# 直接固定到已在 Blackwell 现场验证通过的 wheel 组合, 避免 `pixi install` 回滚现场成功状态.
-torch = { version = "==2.7.0", index = "https://download.pytorch.org/whl/cu128" }
-torchvision = { version = "==0.22.0", index = "https://download.pytorch.org/whl/cu128" }
-torchaudio = { version = "==2.7.0", index = "https://download.pytorch.org/whl/cu128" }
+# 当前按用户要求对齐到 lingbot-world 已验证的 torch 2.10.0 + cu128 组合,
+# 以便排除 Blackwell 上旧 torch / xFuser / yunchang 组合的运行时兼容问题.
+torch = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu128" }
+torchaudio = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" }
 
 # 根仓库推理依赖.
 pillow = "*"

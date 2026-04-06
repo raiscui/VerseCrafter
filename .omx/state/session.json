@@ -1,0 +1,9 @@
+{
+  "session_id": "omx-1775461688037-gcn4fq",
+  "started_at": "2026-04-06T07:48:09.140Z",
+  "cwd": "/root/autodl-tmp/home/rais/VerseCrafter",
+  "pid": 44088,
+  "platform": "linux",
+  "pid_start_ticks": 1416798589,
+  "pid_cmdline": "node /home/rais/.local/state/fnm_multishells/43965_1775461677604/bin/omx --xhigh --madmax"
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import sys
 
@@ -21,6 +22,7 @@ def _load_batch_module():
     assert spec.loader is not None
 
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -185,3 +187,185 @@ def test_ensure_requested_worker_topology_or_raise_allows_sufficient_visible_gpu
         ulysses_degree=2,
         ring_degree=1,
     )
+
+
+def test_ensure_multi_gpu_generation_backend_or_raise_surfaces_real_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_batch_module()
+
+    monkeypatch.setattr(
+        module,
+        "probe_multi_gpu_generation_backend",
+        lambda: {
+            "videox_fun_path": "/repo/third_party/VideoX-Fun",
+            "fuser_module": "/repo/third_party/VideoX-Fun/videox_fun/dist/fuser.py",
+            "backend": "xfuser",
+            "get_sp_group_available": False,
+            "long_ctx_attention_available": False,
+            "import_error": "ImportError('cannot import name x from y')",
+            "import_traceback": "Traceback ...",
+        },
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        module.ensure_multi_gpu_generation_backend_or_raise(
+            required_reason="Step 6 将以 torchrun --nproc-per-node=2 启动",
+        )
+
+    message = str(exc_info.value)
+    assert "多卡预检失败" in message
+    assert "xFuser 后端不可用" in message
+    assert "ImportError('cannot import name x from y')" in message
+    assert "Traceback ..." in message
+
+
+def test_create_parser_accepts_known_horizontal_fov_flags() -> None:
+    module = _load_batch_module()
+
+    args = module.create_parser().parse_args(
+        [
+            "--input_image_path",
+            "demo.png",
+            "--output_root",
+            "output",
+            "--prompt",
+            "test prompt",
+            "--known_horizontal_fov_degrees",
+            "90",
+            "--disable_auto_known_intrinsics",
+        ]
+    )
+
+    assert args.known_horizontal_fov_degrees == 90.0
+    assert args.disable_auto_known_intrinsics is True
+
+
+def test_build_moge_command_passes_known_horizontal_fov_to_step1() -> None:
+    module = _load_batch_module()
+    args = SimpleNamespace(
+        python_bin="python",
+        input_image_path="demo.png",
+        moge_version="v2",
+        device="cuda",
+        moge_pretrained=None,
+        moge_fp16=False,
+    )
+    override_plan = module.IntrinsicOverridePlan(
+        mode="known_horizontal_fov",
+        source="cli",
+        horizontal_fov_degrees=90.0,
+    )
+
+    command = module.build_moge_command(args, Path("estimated_depth"), override_plan)
+
+    assert "--fov_x" in command
+    assert command[command.index("--fov_x") + 1] == "90.0"
+
+
+def test_build_generation_command_can_force_single_gpu_runtime() -> None:
+    module = _load_batch_module()
+    args = SimpleNamespace(
+        nproc_per_node=2,
+        torchrun_bin="torchrun",
+        python_bin="python",
+        transformer_path="model/VerseCrafter",
+        negative_prompt="neg",
+        input_image_path="demo.png",
+        num_inference_steps=60,
+        sample_size="720,1280",
+        ulysses_degree=2,
+        ring_degree=1,
+        guidance_scale=5.0,
+        seed=2025,
+        fps=24,
+        gpu_memory_mode="model_cpu_offload",
+    )
+
+    command = module.build_generation_command(
+        args,
+        generation_prompt="prompt",
+        rendering_maps_dir=Path("maps"),
+        save_path=Path("videos"),
+        nproc_per_node_override=1,
+        ulysses_degree_override=1,
+        ring_degree_override=1,
+    )
+
+    assert command[:2] == ["python", "inference/versecrafter_inference.py"]
+    assert "--ulysses_degree" in command
+    assert command[command.index("--ulysses_degree") + 1] == "1"
+    assert command[command.index("--ring_degree") + 1] == "1"
+
+
+def test_run_generation_command_with_fallback_retries_single_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_batch_module()
+    args = SimpleNamespace(
+        nproc_per_node=2,
+        torchrun_bin="torchrun",
+        python_bin="python",
+        transformer_path="model/VerseCrafter",
+        negative_prompt="neg",
+        input_image_path="demo.png",
+        num_inference_steps=60,
+        sample_size="720,1280",
+        ulysses_degree=2,
+        ring_degree=1,
+        guidance_scale=5.0,
+        seed=2025,
+        fps=24,
+        gpu_memory_mode="model_cpu_offload",
+    )
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], *, cwd: Path) -> None:
+        commands.append(command)
+        if len(commands) == 1:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command)
+
+    monkeypatch.setattr(module, "run_command", fake_run_command)
+
+    status, activated = module.run_generation_command_with_fallback(
+        args,
+        generation_prompt="prompt",
+        rendering_maps_dir=tmp_path / "maps",
+        save_path=tmp_path / "videos",
+        runtime_nproc_per_node=2,
+        runtime_ulysses_degree=2,
+        runtime_ring_degree=1,
+    )
+
+    assert status == "completed_single_gpu_fallback"
+    assert activated is True
+    assert commands[0][0] == "torchrun"
+    assert commands[1][0] == "python"
+    assert commands[1][commands[1].index("--ulysses_degree") + 1] == "1"
+    assert commands[1][commands[1].index("--ring_degree") + 1] == "1"
+
+
+def test_run_command_injects_detected_torch_cuda_arch_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_batch_module()
+    monkeypatch.delenv("TORCH_CUDA_ARCH_LIST", raising=False)
+    monkeypatch.setattr(module, "detect_machine_cuda_arch_list", lambda: "12.0")
+
+    captured: dict[str, object] = {}
+
+    def fake_subprocess_run(command, cwd, check, env):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        captured["check"] = check
+        captured["env"] = env
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_subprocess_run)
+
+    module.run_command(["python", "script.py"], cwd=Path("/tmp/demo"))
+
+    assert captured["command"] == ["python", "script.py"]
+    assert captured["cwd"] == "/tmp/demo"
+    assert captured["check"] is True
+    assert captured["env"]["TORCH_CUDA_ARCH_LIST"] == "12.0"
