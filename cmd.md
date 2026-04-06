@@ -268,7 +268,6 @@ pixi run python inference/single_image_multi_trajectory.py \
   --sample_size "720,1280" \
   --known_horizontal_fov_degrees 90 \
   --num_inference_steps 60 \
-  --gpu_memory_mode model_cpu_offload \
   --ulysses_degree 2 \
   --ring_degree 1 \
   --nproc_per_node 2 \
@@ -276,6 +275,7 @@ pixi run python inference/single_image_multi_trajectory.py \
   --seed 2025 \
   --fps 24
 
+  --gpu_memory_mode model_cpu_offload \
 
 ```
 ### 6.3 只重跑双卡 Step 6 的命令
