@@ -97,7 +97,7 @@ def test_resume_smoke_skips_existing_outputs_and_completes(tmp_path: Path) -> No
 
     manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "completed"
-    assert manifest["shared"]["status"] == "completed"
+    assert manifest["shared"]["status"] == "skipped"
     assert sorted(int(index) for index in manifest["trajectories"].keys()) == list(range(len(EXPECTED_PRESET_NAMES)))
     for preset_index, preset_name in enumerate(EXPECTED_PRESET_NAMES):
         payload = manifest["trajectories"][str(preset_index)]
@@ -113,6 +113,42 @@ def test_resume_smoke_skips_existing_outputs_and_completes(tmp_path: Path) -> No
         manifest["trajectories"]["10"]["generation_prompt"]
         == "test prompt. Camera is moving to the left and slightly downward."
     )
+
+
+def test_resume_smoke_skips_trajectory_when_final_video_exists_without_render_maps(tmp_path: Path) -> None:
+    input_image = tmp_path / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "batch_output"
+    generated_dir = output_root / "0" / "generated_videos"
+    _write_nonempty_file(generated_dir / "generated_video_0.mp4")
+
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--resume",
+        "--preset_indices",
+        "0",
+    ]
+    subprocess.run(command, cwd=str(Path(__file__).resolve().parents[1]), check=True)
+
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    payload = manifest["trajectories"]["0"]
+    assert manifest["status"] == "completed"
+    assert manifest["shared"]["status"] == "skipped"
+    assert payload["status"] == "completed"
+    assert payload["trajectory_assets_status"] == "reused"
+    assert payload["render_status"] == "reused"
+    assert payload["generation_status"] == "reused"
+    assert payload["generated_video_path"].endswith("generated_video_0.mp4")
+    assert not (output_root / "0" / "rendering_4D_maps").exists()
+    assert not (output_root / "shared").exists()
 
 
 def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) -> None:
@@ -340,8 +376,7 @@ def test_known_horizontal_fov_dry_run_invalidates_legacy_reused_depth_without_ma
         text=True,
     )
 
-    assert "- depth: run" in result.stdout
-    assert "lacks matching known-FOV Step 1 metadata" in result.stdout
-    assert "--fov_x 90.0" in result.stdout
-    assert "  render: run ->" in result.stdout
-    assert "  generation: run ->" in result.stdout
+    assert "- skipped: all selected trajectories already have generated_video_*.mp4" in result.stdout
+    assert "- intrinsics: known_horizontal_fov (90.0 deg horizontal FOV)" in result.stdout
+    assert "  render: reuse ->" in result.stdout
+    assert "  generation: reuse ->" in result.stdout

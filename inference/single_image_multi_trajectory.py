@@ -234,6 +234,20 @@ def ensure_clean_path(path: Path, *, keep_if_missing: bool = True) -> None:
         path.unlink()
 
 
+def can_resume_completed_trajectory(
+    *,
+    resume: bool,
+    existing_video: Path | None,
+) -> bool:
+    """判断是否可仅凭最终生成视频直接复用整条轨迹.
+
+    这里刻意不再看 shared depth / intrinsic / rendering_4D_maps.
+    只要 `--resume` 且最终视频还在, 就把该轨迹视为已完成.
+    """
+
+    return resume and existing_video is not None
+
+
 def looks_like_known_3dsmax_series_name(name: str) -> bool:
     """判断名字是否匹配当前已知的 3ds Max 渲染系列.
 
@@ -518,17 +532,6 @@ def explain_why_cuda_is_needed(
         if not is_existing_nonempty_file(gaussian_json_path):
             return f"3D Gaussian 拟合结果缺失, 本次会以 --device {args.device} 执行 Step 3"
 
-    for preset in active_preset_specs:
-        preset_dir = output_root / str(preset["index"])
-        rendering_maps_dir = preset_dir / "rendering_4D_maps"
-        generated_videos_dir = preset_dir / "generated_videos"
-        existing_video = find_generated_video(generated_videos_dir)
-        if existing_video is not None and not is_valid_render_output_dir(rendering_maps_dir):
-            return (
-                f"preset {preset['index']} ({preset['name']}) 缺少完整的 rendering_4D_maps, "
-                f"本次会以 --device {args.device} 执行 Step 5"
-            )
-
     return None
 
 
@@ -559,6 +562,27 @@ def explain_why_multi_gpu_generation_is_needed(
             )
 
     return None
+
+
+def collect_completed_trajectory_videos(
+    *,
+    output_root: Path,
+    preset_specs: list[dict[str, Any]],
+    resume: bool,
+) -> dict[str, Path]:
+    """收集当前已可直接复用的最终视频."""
+
+    completed_videos: dict[str, Path] = {}
+    for preset in preset_specs:
+        index_text = str(preset["index"])
+        generated_videos_dir = output_root / index_text / "generated_videos"
+        existing_video = find_generated_video(generated_videos_dir)
+        if can_resume_completed_trajectory(
+            resume=resume,
+            existing_video=existing_video,
+        ):
+            completed_videos[index_text] = existing_video
+    return completed_videos
 
 
 def build_cuda_preflight_error_message(
@@ -955,6 +979,13 @@ def emit_dry_run_plan(
     print(f"nproc_per_node: {args.nproc_per_node}")
     print("")
 
+    completed_videos = collect_completed_trajectory_videos(
+        output_root=output_root,
+        preset_specs=preset_specs,
+        resume=args.resume,
+    )
+    all_trajectories_reused = len(completed_videos) == len(preset_specs)
+
     depth_reused, depth_reuse_reason = resolve_depth_reuse_decision(
         args=args,
         depth_npz_path=depth_npz_path,
@@ -981,52 +1012,62 @@ def emit_dry_run_plan(
         gaussian_reused = False
 
     print("[Shared]")
-    print(f"- depth: {'reuse' if depth_reused else 'run'} -> {depth_npz_path}")
-    if not depth_reused:
-        print(f"  command: {describe_command(build_moge_command(args, estimated_depth_dir, override_plan))}")
-        if depth_reuse_reason is not None:
-            print(f"  note: {depth_reuse_reason}")
-    if override_plan.mode == "known_horizontal_fov":
-        print(
-            "- intrinsics: "
-            f"{override_plan.mode} ({override_plan.horizontal_fov_degrees:.1f} deg horizontal FOV)"
-        )
-        if override_plan.source == "auto_series_my_nt":
+    if all_trajectories_reused:
+        print("- skipped: all selected trajectories already have generated_video_*.mp4")
+        if override_plan.mode == "known_horizontal_fov":
             print(
-                "  note: auto-matched known 3ds Max series"
-                f" '{override_plan.matched_series_name}', so Step 1 output K will be rewritten"
+                "- intrinsics: "
+                f"{override_plan.mode} ({override_plan.horizontal_fov_degrees:.1f} deg horizontal FOV)"
             )
         else:
-            print("  note: explicit CLI override will rewrite Step 1 output K")
+            print("- intrinsics: moge_predicted")
     else:
-        print("- intrinsics: moge_predicted")
-        if override_plan.source == "auto_disabled":
-            print("  note: auto known-intrinsics override is disabled for this run")
-
-    if intrinsic_preview is not None:
-        print(
-            "  preview: current shared NPZ already "
-            + ("matches" if not intrinsic_will_change else "differs from")
-            + " the effective intrinsic strategy"
-        )
-        if intrinsic_will_change:
-            print("  note: downstream Gaussian / render / video reuse will be invalidated by the new K")
-    if args.camera_only:
-        print(f"- segmentation: {'reuse' if segmentation_reused else 'camera_only_empty'} -> {masks_dir}")
-        print("  note: skip foreground segmentation; keep mask dir empty so the whole image becomes rigid background")
-        print(f"- gaussian: {'reuse' if gaussian_reused else 'camera_only_empty'} -> {gaussian_json_path}")
-        print("  note: skip 3D Gaussian fitting; generate num_objects=0 placeholder JSON")
-    else:
-        print(f"- segmentation: {'reuse' if segmentation_reused else 'run'} -> {masks_dir}")
-        if not segmentation_reused:
-            print(f"  command: {describe_command(build_segmentation_command(args, foreground_masks_dir))}")
-        print(f"- gaussian: {'reuse' if gaussian_reused else 'run'} -> {gaussian_json_path}")
-        if not gaussian_reused:
+        print(f"- depth: {'reuse' if depth_reused else 'run'} -> {depth_npz_path}")
+        if not depth_reused:
+            print(f"  command: {describe_command(build_moge_command(args, estimated_depth_dir, override_plan))}")
+            if depth_reuse_reason is not None:
+                print(f"  note: {depth_reuse_reason}")
+        if override_plan.mode == "known_horizontal_fov":
             print(
-                f"  command: {describe_command(build_gaussian_command(args, depth_npz_path=depth_npz_path, masks_dir=masks_dir, gaussian_output_dir=gaussian_output_dir))}"
+                "- intrinsics: "
+                f"{override_plan.mode} ({override_plan.horizontal_fov_degrees:.1f} deg horizontal FOV)"
             )
+            if override_plan.source == "auto_series_my_nt":
+                print(
+                    "  note: auto-matched known 3ds Max series"
+                    f" '{override_plan.matched_series_name}', so Step 1 output K will be rewritten"
+                )
+            else:
+                print("  note: explicit CLI override will rewrite Step 1 output K")
+        else:
+            print("- intrinsics: moge_predicted")
+            if override_plan.source == "auto_disabled":
+                print("  note: auto known-intrinsics override is disabled for this run")
 
-    center_depth_known = depth_reused
+        if intrinsic_preview is not None:
+            print(
+                "  preview: current shared NPZ already "
+                + ("matches" if not intrinsic_will_change else "differs from")
+                + " the effective intrinsic strategy"
+            )
+            if intrinsic_will_change:
+                print("  note: downstream Gaussian / render / video reuse will be invalidated by the new K")
+        if args.camera_only:
+            print(f"- segmentation: {'reuse' if segmentation_reused else 'camera_only_empty'} -> {masks_dir}")
+            print("  note: skip foreground segmentation; keep mask dir empty so the whole image becomes rigid background")
+            print(f"- gaussian: {'reuse' if gaussian_reused else 'camera_only_empty'} -> {gaussian_json_path}")
+            print("  note: skip 3D Gaussian fitting; generate num_objects=0 placeholder JSON")
+        else:
+            print(f"- segmentation: {'reuse' if segmentation_reused else 'run'} -> {masks_dir}")
+            if not segmentation_reused:
+                print(f"  command: {describe_command(build_segmentation_command(args, foreground_masks_dir))}")
+            print(f"- gaussian: {'reuse' if gaussian_reused else 'run'} -> {gaussian_json_path}")
+            if not gaussian_reused:
+                print(
+                    f"  command: {describe_command(build_gaussian_command(args, depth_npz_path=depth_npz_path, masks_dir=masks_dir, gaussian_output_dir=gaussian_output_dir))}"
+                )
+
+    center_depth_known = depth_reused and not all_trajectories_reused
     center_depth = None
     translation_reference_depth = None
     if center_depth_known:
@@ -1049,13 +1090,17 @@ def emit_dry_run_plan(
         preset_dir = output_root / index_text
         rendering_maps_dir = preset_dir / "rendering_4D_maps"
         generated_videos_dir = preset_dir / "generated_videos"
-        existing_video = find_generated_video(generated_videos_dir)
-        render_reused = args.resume and is_valid_render_output_dir(rendering_maps_dir)
-        if shared_geometry_changed:
-            render_reused = False
-        generation_reused = args.resume and existing_video is not None
-        if shared_geometry_changed:
-            generation_reused = False
+        existing_video = completed_videos.get(index_text) or find_generated_video(generated_videos_dir)
+        trajectory_reused = can_resume_completed_trajectory(
+            resume=args.resume,
+            existing_video=existing_video,
+        )
+        render_reused = trajectory_reused or (
+            args.resume
+            and not shared_geometry_changed
+            and is_valid_render_output_dir(rendering_maps_dir)
+        )
+        generation_reused = trajectory_reused
         generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
 
         print(f"- [{index_text}] {preset['name']}")
@@ -1063,8 +1108,14 @@ def emit_dry_run_plan(
         print(f"  camera_motion_prompt: {preset['camera_motion_prompt']}")
         print(f"  generation_prompt: {generation_prompt}")
         print(f"  preset_dir: {preset_dir}")
-        print(f"  trajectory_assets: run -> {preset_dir / 'custom_camera_trajectory.npz'}")
-        print(f"  static_gaussian_json: run -> {preset_dir / 'custom_3D_gaussian_trajectory.json'}")
+        print(
+            f"  trajectory_assets: {'reuse' if trajectory_reused else 'run'} -> "
+            f"{preset_dir / 'custom_camera_trajectory.npz'}"
+        )
+        print(
+            f"  static_gaussian_json: {'reuse' if trajectory_reused else 'run'} -> "
+            f"{preset_dir / 'custom_3D_gaussian_trajectory.json'}"
+        )
         if center_depth_known:
             print(f"  center_depth: {center_depth:.6f}")
             print(f"  translation_reference_depth: {translation_reference_depth:.6f}")
@@ -1609,10 +1660,43 @@ def main() -> None:
     save_manifest(manifest_path, manifest)
 
     try:
+        completed_videos = collect_completed_trajectory_videos(
+            output_root=output_root,
+            preset_specs=active_preset_specs,
+            resume=args.resume,
+        )
+        pending_preset_specs = [
+            preset for preset in active_preset_specs if str(preset["index"]) not in completed_videos
+        ]
+
+        if not pending_preset_specs:
+            manifest["shared"]["depth_status"] = "skipped"
+            manifest["shared"]["intrinsic_status"] = "skipped"
+            manifest["shared"]["segmentation_status"] = "skipped"
+            manifest["shared"]["gaussian_status"] = "skipped"
+            manifest["shared"]["status"] = "skipped"
+            manifest["shared"]["error"] = None
+            for preset in active_preset_specs:
+                index_text = str(preset["index"])
+                trajectory_manifest = manifest["trajectories"][index_text]
+                generation_prompt = build_generation_prompt(args.prompt, preset["camera_motion_prompt"])
+                trajectory_manifest["camera_motion_prompt"] = preset["camera_motion_prompt"]
+                trajectory_manifest["generation_prompt"] = generation_prompt
+                trajectory_manifest["trajectory_assets_status"] = "reused"
+                trajectory_manifest["render_status"] = "reused"
+                trajectory_manifest["generation_status"] = "reused"
+                trajectory_manifest["generated_video_path"] = str(completed_videos[index_text])
+                trajectory_manifest["status"] = "completed"
+                trajectory_manifest["error"] = None
+            manifest["status"] = "completed"
+            save_manifest(manifest_path, manifest)
+            logger.info("All selected presets already have generated_video_*.mp4, skipping shared and trajectory steps.")
+            return
+
         cuda_required_reason = explain_why_cuda_is_needed(
             args,
             output_root=output_root,
-            active_preset_specs=active_preset_specs,
+            active_preset_specs=pending_preset_specs,
         )
         if cuda_required_reason is not None:
             ensure_cuda_runtime_ready_or_raise(
@@ -1622,7 +1706,7 @@ def main() -> None:
         multi_gpu_required_reason = explain_why_multi_gpu_generation_is_needed(
             args,
             output_root=output_root,
-            active_preset_specs=active_preset_specs,
+            active_preset_specs=pending_preset_specs,
         )
         if multi_gpu_required_reason is not None:
             ensure_requested_worker_topology_or_raise(
@@ -1793,12 +1877,10 @@ def main() -> None:
             save_manifest(manifest_path, manifest)
 
             try:
-                existing_video = find_generated_video(generated_videos_dir)
-                if (
-                    args.resume
-                    and not shared_geometry_changed
-                    and existing_video is not None
-                    and is_valid_render_output_dir(rendering_maps_dir)
+                existing_video = completed_videos.get(index_text) or find_generated_video(generated_videos_dir)
+                if can_resume_completed_trajectory(
+                    resume=args.resume,
+                    existing_video=existing_video,
                 ):
                     trajectory_manifest["trajectory_assets_status"] = "reused"
                     trajectory_manifest["render_status"] = "reused"
