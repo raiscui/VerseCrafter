@@ -7,3 +7,4 @@ __pycache__/
 pytorch3d/
 model/
 demo_data/
+.omx/

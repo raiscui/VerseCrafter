@@ -253,6 +253,25 @@ def test_linear_trajectory_lead_in_holds_then_catches_up_to_original_path() -> N
     assert np.allclose(eased[5:, :3, 3], baseline[5:, :3, 3], atol=1e-6)
 
 
+def test_generate_blender_camera_trajectory_defaults_to_no_lead_in() -> None:
+    common_kwargs = {
+        "movement_distance": 0.5,
+        "center_depth": 2.5,
+        "translation_reference_depth": 1.0,
+        "num_frames": 9,
+    }
+
+    default_trajectory = generate_blender_camera_trajectory("left", **common_kwargs)
+    explicit_no_lead_in = generate_blender_camera_trajectory(
+        "left",
+        **common_kwargs,
+        lead_in_frames=0,
+        hold_frames=0,
+    )
+
+    assert np.allclose(default_trajectory, explicit_no_lead_in, atol=1e-6)
+
+
 def test_orbit_trajectory_lead_in_reduces_early_arc_motion_without_changing_tail() -> None:
     common_kwargs = {
         "movement_distance": 0.75,
@@ -320,7 +339,7 @@ def test_orbit_radius_variants_preserve_scale_and_direction_metadata() -> None:
     assert np.max(np.abs(wider_counterclockwise_translations[:, 0])) > np.max(np.abs(smaller_translations[:, 0]))
     assert np.max(np.abs(smaller_translations[:, 2])) > np.max(np.abs(baseline_translations[:, 2]))
     assert np.max(np.abs(wider_counterclockwise_translations[:, 2])) > np.max(np.abs(smaller_translations[:, 2]))
-    # 默认 lead-in 会让第 0-1 帧更稳, 所以方向断言改到第一个明显进入弧线的采样点.
+    # 默认轨迹现在不再自动做 lead-in, 所以可以直接检查早期采样点的方向.
     assert baseline_translations[2, 2] < 0.0
     assert smaller_translations[2, 2] < 0.0
     assert wider_counterclockwise_translations[2, 2] > 0.0

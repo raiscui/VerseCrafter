@@ -1,6 +1,6 @@
 {
-  "last_turn_at": "2026-04-07T09:32:57.244Z",
-  "last_progress_at": "2026-04-07T09:32:57.244Z",
-  "turn_count": 0,
-  "last_agent_output": ""
+  "last_turn_at": "2026-04-07T11:32:47.766Z",
+  "last_progress_at": "2026-04-07T11:32:47.766Z",
+  "turn_count": 1,
+  "last_agent_output": "只改了 `raiscui` 那组“首帧问题”引入的 lead-in 默认行为，没有动更早那批别人写的首帧注入逻辑。\n\n改动在 [`inference/single_image_multi_trajec"
 }

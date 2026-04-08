@@ -254,20 +254,20 @@ pixi run python inference/single_image_multi_trajectory.py \
 
 ```bash
 pixi run python inference/single_image_multi_trajectory.py \
---input_image_path 'demo_data/nt1/a.png' \
---output_root demo_data/nt1 \
+--input_image_path 'demo_data/nt4/d.png' \
+--output_root demo_data/nt4 \
 --transformer_path model/VerseCrafter \
---prompt "Crafted with the handcrafted texture of polymer clay to create an immersive miniature exhibition hall. A warm beige base sets a soothing ambience, while contrasting warm orange and light blue accents outline a sense of technology. On the right display stand, a vintage propeller aircraft model stands quietly, with the brand logo imprinted on its fuselage, echoing the concept of all-scenario mobility. The sand table in the foreground uses blue-and-white clay to recreate a blueprint for a future smart city, with roads, buildings and energy facilities arranged in layers, and robotic arm shapes embodying an industrial heritage. The background extends a transparent exhibition circulation route, where white guide lines connect display cases, interactive stations and miniature windows. Inside the window, a fairy-tale cottage exudes humanistic warmth. Overall, the warmth of handcrafting softens the coldness of technology, while the miniature world embodies the brand’s mobility vision, creating a brand visual that integrates artistic sensibility and narrative depth.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+--prompt "Crafted with the handcrafted texture of polymer clay to create an immersive miniature exhibition hall. A warm beige base sets a soothing ambience, while contrasting warm orange and light blue accents outline a sense of technology. On the right display stand, a vintage propeller aircraft model stands quietly, with the brand logo imprinted on its fuselage, echoing the concept of all-scenario mobility. The sand table in the foreground uses clay to recreate a blueprint for a future smart city, with roads, buildings and energy facilities arranged in layers, and robotic arm shapes embodying an industrial heritage. The background extends a transparent exhibition circulation route, where white guide lines connect display cases, interactive stations and miniature windows. Inside the window, a fairy-tale cottage exudes humanistic warmth. Overall, the warmth of handcrafting softens the coldness of technology, while the miniature world embodies the brand’s mobility vision, creating a brand visual that integrates artistic sensibility and narrative depth.A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
 --negative_prompt "直视太阳,刺眼的太阳光,粉尘,高反光,高光点,脏,闪光点,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
 --camera_only \
 --moge_version v2 \
 --moge_pretrained Ruicheng/moge-2-vitl \
 --auto_center_depth_quantile 0.25 \
---translation_reference_depth_scale 0.9 \
---total_movement_distance_factor 1.2 \
+--translation_reference_depth_scale 0.85 \
+--total_movement_distance_factor 1 \
 --sample_size "720,1280" \
 --known_horizontal_fov_degrees 90 \
---num_inference_steps 66 \
+--num_inference_steps 67 \
 --ulysses_degree 2 \
 --ring_degree 1 \
 --nproc_per_node 2 \

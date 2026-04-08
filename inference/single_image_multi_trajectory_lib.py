@@ -40,8 +40,8 @@ DEFAULT_FRAME_STEP = 1
 DEFAULT_RADIUS_X_FACTOR = 0.15
 DEFAULT_RADIUS_Y_FACTOR = 0.10
 DEFAULT_NUM_CIRCLES = 2
-DEFAULT_LEAD_IN_FRAMES = 5
-DEFAULT_LEAD_IN_HOLD_FRAMES = 2
+DEFAULT_LEAD_IN_FRAMES = 0
+DEFAULT_LEAD_IN_HOLD_FRAMES = 0
 LINEAR_DIAGONAL_UP_VERTICAL_SCALE = 0.6
 # LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = LINEAR_DIAGONAL_UP_VERTICAL_SCALE / 0.8  #  朝下更给力
 LINEAR_DIAGONAL_DOWN_VERTICAL_SCALE = 0.8  #  原始画面镜头在上方, 需要运动 朝下更给力点
@@ -120,11 +120,11 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
     TrajectoryPreset(
         6,
         "clockwise_elliptical",
-        (0.5, 0.8),
+        (0.5, 0.7),
         "orbit",
         "The camera orbits the scene clockwise with an elliptical radius.",
         orbit_radius_scale=1.2,
-        orbit_direction=0.6,
+        orbit_direction=1.1,
     ),
     TrajectoryPreset(
         7,
@@ -142,7 +142,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the left and upward",
         linear_direction_cv=(-1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
-        center_facing_target_offset_scale_cv=(-0.35, 0.0, 0.0),
+        center_facing_target_offset_scale_cv=(-0.2, 0.0, 0.0),
     ),
     TrajectoryPreset(
         9,
@@ -151,7 +151,7 @@ TRAJECTORY_PRESETS: tuple[TrajectoryPreset, ...] = (
         "linear",
         "Camera is moving to the right and upward",
         linear_direction_cv=(1.0, -LINEAR_DIAGONAL_UP_VERTICAL_SCALE, 0.0),
-        center_facing_target_offset_scale_cv=(0.35, 0.0, 0.0),
+        center_facing_target_offset_scale_cv=(0.2, 0.0, 0.0),
     ),
     TrajectoryPreset(
         10,
