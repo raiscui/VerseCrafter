@@ -339,10 +339,6 @@ if coefficients is not None:
             f"{num_skip_start_steps} to {effective_teacache_skip_start_steps} "
             f"because num_inference_steps={num_inference_steps}."
         )
-    print(
-        "Enable TeaCache with threshold "
-        f"{teacache_threshold} and skip the first {effective_teacache_skip_start_steps} steps."
-    )
     pipeline.transformer.enable_teacache(
         coefficients, num_inference_steps, teacache_threshold, 
         num_skip_start_steps=effective_teacache_skip_start_steps, offload=teacache_offload

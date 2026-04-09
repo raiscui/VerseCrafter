@@ -1,6 +1,6 @@
 {
-  "last_turn_at": "2026-04-07T11:32:47.766Z",
-  "last_progress_at": "2026-04-07T11:32:47.766Z",
+  "last_turn_at": "2026-04-09T06:06:36.184Z",
+  "last_progress_at": "2026-04-09T06:06:36.184Z",
   "turn_count": 1,
-  "last_agent_output": "只改了 `raiscui` 那组“首帧问题”引入的 lead-in 默认行为，没有动更早那批别人写的首帧注入逻辑。\n\n改动在 [`inference/single_image_multi_trajec"
+  "last_agent_output": "已处理。补充说明：`inference/single_image_multi_trajectory.py` 里其实已经是 `resume=True` 默认值，我这次把这个“安全默认”显式锁住并写清楚了"
 }

@@ -313,7 +313,7 @@ If you want to generate twelve fixed camera-motion videos from the same input im
 For each preset, the script also appends a preset-specific camera-motion sentence to the final generation prompt. For example, the `left` preset appends `Camera is moving to the left.` automatically, so the text prompt and the geometric trajectory stay aligned.
 
 ```bash
-python inference/single_image_multi_trajectory.py \
+pixi run python inference/single_image_multi_trajectory.py \
   --input_image_path $INPUT_IMAGE \
   --output_root $OUTPUT_DIR/multi_trajectory_batch \
   --transformer_path $MODEL_PATH \
@@ -329,6 +329,8 @@ python inference/single_image_multi_trajectory.py \
   --ulysses_degree 1 \
   --ring_degree 1
 ```
+
+`single_image_multi_trajectory.py` enables `--resume` by default, so rerunning the same `--output_root` will reuse existing valid outputs instead of overwriting videos. Only add `--no_resume` when you intentionally want to rebuild that batch directory from scratch.
 
 The batch output layout is:
 

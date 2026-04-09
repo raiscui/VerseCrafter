@@ -1415,7 +1415,15 @@ def create_parser() -> argparse.ArgumentParser:
         description="Generate six deterministic camera-motion videos from one image in VerseCrafter."
     )
     parser.add_argument("--input_image_path", type=str, required=True, help="Path to the input image")
-    parser.add_argument("--output_root", type=str, required=True, help="Root output directory for the batch run")
+    parser.add_argument(
+        "--output_root",
+        type=str,
+        required=True,
+        help=(
+            "Root output directory for the batch run. Existing outputs are resumed by default; "
+            "use --no_resume only when you intentionally want to rebuild this directory."
+        ),
+    )
     parser.add_argument("--prompt", type=str, required=True, help="Prompt used by VerseCrafter generation")
     parser.add_argument(
         "--object_prompt",
@@ -1584,13 +1592,16 @@ def create_parser() -> argparse.ArgumentParser:
         dest="resume",
         action="store_true",
         default=True,
-        help="Reuse valid shared outputs and completed trajectories when rerunning (default: enabled)",
+        help=(
+            "Reuse valid shared outputs and completed trajectories when rerunning "
+            "(default: enabled, which is safer against accidentally overwriting an existing output_root)"
+        ),
     )
     parser.add_argument(
         "--no_resume",
         dest="resume",
         action="store_false",
-        help="Disable resume and rebuild outputs for this batch run",
+        help="Disable resume and rebuild outputs for this batch run, which may overwrite existing videos under --output_root",
     )
     parser.add_argument(
         "--dry_run",
@@ -1626,6 +1637,11 @@ def main() -> None:
 
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
+    if not args.resume:
+        logger.warning(
+            "Resume is disabled via --no_resume; existing outputs under %s may be deleted and regenerated.",
+            output_root.resolve(),
+        )
 
     target_height, target_width = parse_sample_size(args.sample_size)
     validate_generation_sample_size(target_height, target_width)

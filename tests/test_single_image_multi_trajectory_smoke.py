@@ -186,6 +186,64 @@ def test_dry_run_includes_safe_gpu_memory_mode_for_generation(tmp_path: Path) ->
     assert "--prompt 'test prompt. Camera is moving to the left.'" in result.stdout
 
 
+def test_dry_run_enables_resume_by_default(tmp_path: Path) -> None:
+    input_image = tmp_path / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "default_resume_output"
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--dry_run",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "resume: True" in result.stdout
+
+
+def test_dry_run_warns_when_no_resume_can_overwrite_outputs(tmp_path: Path) -> None:
+    input_image = tmp_path / "input.png"
+    input_image.write_bytes(b"fake")
+
+    output_root = tmp_path / "no_resume_output"
+    command = [
+        sys.executable,
+        "inference/single_image_multi_trajectory.py",
+        "--input_image_path",
+        str(input_image),
+        "--output_root",
+        str(output_root),
+        "--prompt",
+        "test prompt",
+        "--no_resume",
+        "--dry_run",
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=str(Path(__file__).resolve().parents[1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "resume: False" in result.stdout
+    assert "Resume is disabled via --no_resume" in result.stderr
+
+
 def test_camera_only_dry_run_skips_foreground_pipeline(tmp_path: Path) -> None:
     input_image = tmp_path / "input.png"
     input_image.write_bytes(b"fake")
