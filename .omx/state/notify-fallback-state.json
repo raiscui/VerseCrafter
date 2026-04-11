@@ -10,14 +10,14 @@
   "idle_max_poll_ms": 1000,
   "pid_file": "/root/autodl-tmp/home/rais/VerseCrafter/.omx/state/notify-fallback.pid",
   "max_lifetime_ms": 21600000,
-  "tracked_files": 3,
+  "tracked_files": 5,
   "seen_turns": 0,
   "dispatch_drain": {
     "enabled": true,
     "max_per_tick": 5,
-    "run_count": 7741,
+    "run_count": 71003,
     "leader_only": true,
-    "last_tick_at": "2026-04-09T06:41:33.895Z",
+    "last_tick_at": "2026-04-09T11:59:50.453Z",
     "last_result": {
       "processed": 0,
       "skipped": 0,
@@ -30,16 +30,16 @@
     "leader_only": true,
     "stale_threshold_ms": 180000,
     "precomputed_leader_stale": true,
-    "last_tick_at": "2026-04-09T06:41:33.895Z",
+    "last_tick_at": "2026-04-09T11:59:50.453Z",
     "last_error": null,
-    "run_count": 7741
+    "run_count": 71003
   },
   "ralph_continue_steer": {
     "enabled": true,
     "cadence_ms": 60000,
     "message": "Ralph loop active continue",
     "active": false,
-    "last_state_check_at": "2026-04-09T06:41:33.912Z",
+    "last_state_check_at": "2026-04-09T11:59:50.476Z",
     "last_sent_at": "",
     "cooldown_anchor_at": "",
     "last_reason": "blocked_by_current_session",
@@ -57,10 +57,10 @@
   "fallback_auto_nudge": {
     "enabled": true,
     "stall_ms": 5000,
-    "last_tick_at": "2026-04-09T06:41:33.911Z",
-    "last_turn_at": "2026-04-09T06:06:36.184Z",
-    "last_turn_count": 1,
-    "last_message": "已处理。补充说明：`inference/single_image_multi_trajectory.py` 里其实已经是 `resume=True` 默认值，我这次把这个“安全默认”显式锁住并写清楚了",
+    "last_tick_at": "2026-04-09T11:59:50.475Z",
+    "last_turn_at": "2026-04-09T11:22:55.998Z",
+    "last_turn_count": 2,
+    "last_message": "这个 `(0.1, 0.2)` 是 **`movement_distance_range`**，不是方向。\n\n在 `inference/single_image_multi_trajectory_li",
     "last_reason": "eligible_but_not_sent",
     "last_error": null,
     "last_nudged_signature": "",
@@ -80,9 +80,11 @@
     "max_ms": 1000,
     "current_ms": 250,
     "idle_streak": 0,
-    "last_tick_at": "2026-04-09T06:41:33.912Z",
-    "last_activity_at": "2026-04-09T06:41:33.912Z",
+    "last_tick_at": "2026-04-09T11:59:50.476Z",
+    "last_activity_at": "2026-04-09T11:59:50.476Z",
     "last_activity_reason": "leader_nudge"
   },
-  "last_cycle_activity": "leader_nudge"
+  "stop_reason": "max_lifetime_exceeded",
+  "stop_signal": null,
+  "stopping": true
 }

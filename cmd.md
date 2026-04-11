@@ -303,7 +303,62 @@ pixi run python inference/single_image_multi_trajectory.py \
 --guidance_scale 5 \
 --gpu_memory_mode model_full_load \
 --seed 2025 \
---fps 16
+--fps 16 \
+--resume
+
+
+pixi run python inference/single_image_multi_trajectory.py \
+--input_image_path 'demo_data/dm7/07.png' \
+--output_root demo_data/dm7 \
+--transformer_path model/VerseCrafter \
+--prompt "画面是新海诚动漫风格的展厅室内空间,有一些画在墙上,正前方是一个螺旋桨飞机,外面是云海, 地面和墙壁没有镜面反光,有一些弱弱的模糊反光,地面有一些白线图案一样灯带 ,build A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+--negative_prompt "Looking directly at the sun, dazzling sunlight, dust, high reflection, bright highlights, dirt, sparkling points,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
+--camera_only \
+--moge_version v2 \
+--moge_pretrained Ruicheng/moge-2-vitl \
+--auto_center_depth_quantile 0.25 \
+--translation_reference_depth_scale 0.85 \
+--total_movement_distance_factor 1 \
+--sample_size "720,1280" \
+--known_horizontal_fov_degrees 90 \
+--num_inference_steps 67 \
+--ulysses_degree 2 \
+--ring_degree 1 \
+--nproc_per_node 2 \
+--guidance_scale 5 \
+--gpu_memory_mode model_full_load \
+--seed 2025 \
+--fps 16 \
+--resume
+
+
+pixi run python inference/single_image_multi_trajectory.py \
+--input_image_path '/autodl-fs/data/verse_video/nt6/f.png' \
+--output_root /autodl-fs/data/verse_video/nt6 \
+--transformer_path model/VerseCrafter \
+--prompt "画面是黏土风格的商业空间,有一些黏土做了浮雕在墙上,还有机械零件在墙壁上展示,地面有一些白线线条图案,build A realistic natural video of the original scene, Keep the scene content unchanged during camera movement. Ensure stereo correctness and preserve the geometric structure. No specular reflections, no highly reflective ground.high detail." \
+--negative_prompt "Looking directly at the sun, dazzling sunlight, dust, high reflection, bright highlights, dirt, sparkling points,animated screen content, flickering LEDs, moving reflections, moving shadows, lighting change, object motion, robot arm motion, aircraft motion, prop motion, human motion, body motion, pose change, temporal deformation, geometry warping, ghosting, jitter, flicker, camera shake, unstable highlights, low quality" \
+--camera_only \
+--moge_version v2 \
+--moge_pretrained Ruicheng/moge-2-vitl \
+--auto_center_depth_quantile 0.25 \
+--translation_reference_depth_scale 0.85 \
+--total_movement_distance_factor 1 \
+--sample_size "720,1280" \
+--known_horizontal_fov_degrees 90 \
+--num_inference_steps 67 \
+--ulysses_degree 2 \
+--ring_degree 1 \
+--nproc_per_node 2 \
+--guidance_scale 5 \
+--gpu_memory_mode model_full_load \
+--seed 2025 \
+--fps 16 \
+--resume
+
+
+
+
 
 ```
 ### 6.3 只重跑双卡 Step 6 的命令

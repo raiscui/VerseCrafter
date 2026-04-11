@@ -1,6 +1,6 @@
 {
-  "last_turn_at": "2026-04-09T06:06:36.184Z",
-  "last_progress_at": "2026-04-09T06:06:36.184Z",
-  "turn_count": 1,
-  "last_agent_output": "已处理。补充说明：`inference/single_image_multi_trajectory.py` 里其实已经是 `resume=True` 默认值，我这次把这个“安全默认”显式锁住并写清楚了"
+  "last_turn_at": "2026-04-09T11:22:55.998Z",
+  "last_progress_at": "2026-04-09T11:22:55.998Z",
+  "turn_count": 2,
+  "last_agent_output": "这个 `(0.1, 0.2)` 是 **`movement_distance_range`**，不是方向。\n\n在 `inference/single_image_multi_trajectory_li"
 }
